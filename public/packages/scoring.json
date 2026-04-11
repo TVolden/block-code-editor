@@ -1,0 +1,66 @@
+[
+  {
+    "id": "sc-award-points",
+    "name": "Award Points",
+    "blockType": "command",
+    "params": [
+      { "name": "player", "type": "Player" },
+      { "name": "amount", "type": "number" }
+    ],
+    "category": "Scoring",
+    "color": "#7A1C5A"
+  },
+  {
+    "id": "sc-deduct-points",
+    "name": "Deduct Points",
+    "blockType": "command",
+    "params": [
+      { "name": "player", "type": "Player" },
+      { "name": "amount", "type": "number" }
+    ],
+    "category": "Scoring",
+    "color": "#7A1C5A"
+  },
+  {
+    "id": "sc-reset-score",
+    "name": "Reset Score",
+    "blockType": "command",
+    "params": [
+      { "name": "player", "type": "Player" }
+    ],
+    "category": "Scoring",
+    "color": "#7A1C5A"
+  },
+  {
+    "id": "sc-get-score",
+    "name": "Score",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [
+      { "name": "player", "type": "Player" }
+    ],
+    "category": "Scoring",
+    "color": "#7A1C5A"
+  },
+  {
+    "id": "sc-leading",
+    "name": "Leading Player",
+    "blockType": "query",
+    "returnType": "Player",
+    "params": [],
+    "category": "Scoring",
+    "color": "#7A1C5A"
+  },
+  {
+    "id": "sc-score-gt",
+    "name": "Score Greater?",
+    "blockType": "query",
+    "returnType": "boolean",
+    "params": [
+      { "name": "player", "type": "Player" },
+      { "name": "amount", "type": "number" }
+    ],
+    "category": "Scoring",
+    "color": "#7A1C5A"
+  }
+]

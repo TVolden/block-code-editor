@@ -1,0 +1,161 @@
+[
+  {
+    "id": "when-played",
+    "name": "When Played",
+    "blockType": "start",
+    "params": [],
+    "category": "Events",
+    "color": "#7A1C2A"
+  },
+  {
+    "id": "when-active",
+    "name": "When Active",
+    "blockType": "start",
+    "params": [],
+    "category": "Events",
+    "color": "#7A1C2A"
+  },
+  {
+    "id": "when-drawn",
+    "name": "When Drawn",
+    "blockType": "start",
+    "params": [],
+    "category": "Events",
+    "color": "#7A1C2A"
+  },
+  {
+    "id": "DrawCard",
+    "name": "Draw Card",
+    "blockType": "command",
+    "params": [
+      { "name": "deck", "type": "Deck" },
+      { "name": "hand", "type": "string" }
+    ],
+    "category": "Actions",
+    "color": "#1C3A7A"
+  },
+  {
+    "id": "PlayCard",
+    "name": "Play Card",
+    "blockType": "command",
+    "params": [
+      { "name": "card", "type": "Card" },
+      { "name": "target", "type": "Player" }
+    ],
+    "category": "Actions",
+    "color": "#1C3A7A"
+  },
+  {
+    "id": "GainMana",
+    "name": "Gain Mana",
+    "blockType": "command",
+    "params": [
+      { "name": "amount", "type": "number" }
+    ],
+    "category": "Actions",
+    "color": "#1C3A7A"
+  },
+  {
+    "id": "SelfPlayer",
+    "name": "Self",
+    "blockType": "query",
+    "returnType": "Player",
+    "params": [],
+    "category": "Player",
+    "color": "#1C6B3A"
+  },
+  {
+    "id": "TargetPlayer",
+    "name": "Target Player",
+    "blockType": "query",
+    "returnType": "Player",
+    "params": [],
+    "category": "Player",
+    "color": "#1C6B3A"
+  },
+  {
+    "id": "PlayerHand",
+    "name": "Player Hand",
+    "blockType": "query",
+    "returnType": "string",
+    "params": [
+      { "name": "player", "type": "Player" }
+    ],
+    "category": "Player",
+    "color": "#1C6B3A"
+  },
+  {
+    "id": "HandSize",
+    "name": "Hand Size",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [
+      { "name": "player", "type": "Player" }
+    ],
+    "category": "Player",
+    "color": "#1C6B3A"
+  },
+  {
+    "id": "MainDeck",
+    "name": "Main Deck",
+    "blockType": "query",
+    "returnType": "Deck",
+    "params": [],
+    "category": "Deck",
+    "color": "#7A561C"
+  },
+  {
+    "id": "DiscardPile",
+    "name": "Discard Pile",
+    "blockType": "query",
+    "returnType": "Deck",
+    "params": [],
+    "category": "Deck",
+    "color": "#7A561C"
+  },
+  {
+    "id": "DeckSize",
+    "name": "Deck Size",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [
+      { "name": "deck", "type": "Deck" }
+    ],
+    "category": "Deck",
+    "color": "#7A561C"
+  },
+  {
+    "id": "TopCard",
+    "name": "Top Card",
+    "blockType": "query",
+    "returnType": "Card",
+    "params": [
+      { "name": "deck", "type": "Deck" }
+    ],
+    "category": "Card",
+    "color": "#5A1C7A"
+  },
+  {
+    "id": "CardAtIndex",
+    "name": "Card At",
+    "blockType": "query",
+    "returnType": "Card",
+    "params": [
+      { "name": "deck", "type": "Deck" },
+      { "name": "index", "type": "number" }
+    ],
+    "category": "Card",
+    "color": "#5A1C7A"
+  },
+  {
+    "id": "CardCost",
+    "name": "Card Cost",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [
+      { "name": "card", "type": "Card" }
+    ],
+    "category": "Card",
+    "color": "#5A1C7A"
+  }
+]

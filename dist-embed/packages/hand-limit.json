@@ -1,0 +1,67 @@
+[
+  {
+    "id": "hl-set-limit",
+    "name": "Set Hand Limit",
+    "blockType": "command",
+    "params": [
+      { "name": "player", "type": "Player" },
+      { "name": "limit", "type": "number" }
+    ],
+    "category": "Hand Limit",
+    "color": "#7A3C1C"
+  },
+  {
+    "id": "hl-enforce",
+    "name": "Enforce Limit",
+    "blockType": "command",
+    "params": [
+      { "name": "player", "type": "Player" }
+    ],
+    "category": "Hand Limit",
+    "color": "#7A3C1C"
+  },
+  {
+    "id": "hl-discard-to",
+    "name": "Discard To Limit",
+    "blockType": "command",
+    "params": [
+      { "name": "player", "type": "Player" },
+      { "name": "deck", "type": "Deck" }
+    ],
+    "category": "Hand Limit",
+    "color": "#7A3C1C"
+  },
+  {
+    "id": "hl-get-limit",
+    "name": "Hand Limit",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [
+      { "name": "player", "type": "Player" }
+    ],
+    "category": "Hand Limit",
+    "color": "#7A3C1C"
+  },
+  {
+    "id": "hl-hand-size",
+    "name": "Hand Size",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [
+      { "name": "player", "type": "Player" }
+    ],
+    "category": "Hand Limit",
+    "color": "#7A3C1C"
+  },
+  {
+    "id": "hl-over-limit",
+    "name": "Over Limit?",
+    "blockType": "query",
+    "returnType": "boolean",
+    "params": [
+      { "name": "player", "type": "Player" }
+    ],
+    "category": "Hand Limit",
+    "color": "#7A3C1C"
+  }
+]

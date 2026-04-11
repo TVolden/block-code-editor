@@ -1,0 +1,23 @@
+[
+  {
+    "id": "hand-limit",
+    "name": "Hand Limit",
+    "description": "Enforce and inspect player hand size limits",
+    "url": "/packages/hand-limit.json",
+    "builtIn": false
+  },
+  {
+    "id": "scoring",
+    "name": "Scoring",
+    "description": "Score tracking, point awards, and leaderboard queries",
+    "url": "/packages/scoring.json",
+    "builtIn": false
+  },
+  {
+    "id": "motion-ops",
+    "name": "Motion & Operators",
+    "description": "General-purpose motion, control flow, and math operators",
+    "url": "/packages/motion-ops.json",
+    "builtIn": false
+  }
+]

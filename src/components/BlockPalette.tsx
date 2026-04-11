@@ -1,0 +1,331 @@
+import React, { useState, useMemo } from 'react';
+import type { BlockDefinition } from '../types';
+import type { PackageInfo, LoadedPackage } from '../blockRegistry';
+import { getAllDefinitions, getCategories } from '../blockRegistry';
+import { commandBlockPath, hatBlockPath, queryBlockPath, socketPath } from '../utils/blockShapes';
+import { getBlockWidth, getBlockHeight, getSocketPositions, QUERY_H, PRIMITIVE_TYPES } from '../utils/blockLayout';
+import { useTheme } from '../ThemeContext';
+
+// ── Props ─────────────────────────────────────────────────────────────────────
+
+interface Props {
+  onPointerDown: (e: React.PointerEvent, definitionId: string) => void;
+  isDropTarget?: boolean;
+  registryVersion: number;
+  availablePackages: PackageInfo[];
+  loadedPackages: LoadedPackage[];
+  onPackageToggle: (pkg: PackageInfo, currentlyLoaded: boolean) => Promise<void>;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// ── PaletteBlock ──────────────────────────────────────────────────────────────
+
+function PaletteBlock({ def, onPointerDown }: {
+  def: BlockDefinition;
+  onPointerDown: Props['onPointerDown'];
+}) {
+  const theme = useTheme();
+  const w     = getBlockWidth(def);
+  const h     = getBlockHeight(def);
+  const sockets = getSocketPositions(def);
+
+  const clipId     = `pal-${def.id}`;
+
+  let path: string;
+  if (def.blockType === 'start')        path = hatBlockPath(w, h);
+  else if (def.blockType === 'command') path = commandBlockPath(w, h);
+  else                                  path = queryBlockPath(def.returnType!, w, QUERY_H);
+
+  return (
+    <div
+      style={{ marginBottom: 6, userSelect: 'none' }}
+      onPointerDown={(e) => onPointerDown(e, def.id)}
+    >
+      <svg width={w + 2} height={h + 8} style={{ display: 'block', cursor: 'grab', overflow: 'visible' }}>
+        <defs>
+          <clipPath id={clipId}>
+            <path d={path} />
+          </clipPath>
+        </defs>
+        <g transform="translate(1, 1)">
+          <path d={path} fill={theme.blockBody} stroke={theme.blockBorder} strokeWidth={1.5} />
+          <rect x={0} y={0} width={4} height={h + 20}
+            fill={def.color} clipPath={`url(#${clipId})`} />
+          <text x={11} y={h / 2 + 4} fill={theme.blockText} fontSize={11} fontWeight="bold" fontFamily="sans-serif"
+            style={{ userSelect: 'none', pointerEvents: 'none' }}>
+            {def.name}
+            {def.blockType === 'query' && def.returnType && (
+              <tspan fill={theme.textMuted} fontSize={9} fontWeight="normal">
+                {` [${def.returnType}]`}
+              </tspan>
+            )}
+          </text>
+          {sockets.map((sock) => {
+            const paramName = def.params[sock.index]?.name;
+            const isCustom  = !PRIMITIVE_TYPES.has(sock.type);
+            return (
+              <g key={sock.index} transform={`translate(${sock.x},${sock.y})`}>
+                <path d={socketPath(sock.type, sock.w, sock.h)}
+                  fill={theme.socketBody} stroke={theme.blockBorder} strokeWidth={1} />
+                {isCustom ? (
+                  <text x={sock.w / 2} y={sock.h / 2 + 3} textAnchor="middle"
+                    fill={theme.textSecondary} fontSize={9} fontFamily="sans-serif"
+                    style={{ userSelect: 'none', pointerEvents: 'none' }}>
+                    {sock.type}
+                  </text>
+                ) : paramName ? (
+                  <text x={sock.w / 2} y={sock.h / 2 + 3} textAnchor="middle"
+                    fill={theme.textMuted} fontSize={9} fontFamily="sans-serif" fontStyle="italic"
+                    style={{ userSelect: 'none', pointerEvents: 'none' }}>
+                    {paramName}
+                  </text>
+                ) : null}
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+// ── CategorySection ───────────────────────────────────────────────────────────
+
+function CategorySection({ cat, defs, collapsed, onToggle, onPointerDown }: {
+  cat: string;
+  defs: BlockDefinition[];
+  collapsed: boolean;
+  onToggle: (cat: string) => void;
+  onPointerDown: Props['onPointerDown'];
+}) {
+  const theme = useTheme();
+  return (
+    <div style={{ marginBottom: 2 }}>
+      <button
+        onClick={() => onToggle(cat)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          width: '100%', background: 'none', border: 'none',
+          padding: '5px 0 4px',
+          borderBottom: `1px solid ${theme.border}`,
+          cursor: 'pointer', textAlign: 'left',
+          marginBottom: collapsed ? 0 : 6,
+        }}
+      >
+        <span style={{ color: theme.accent, fontSize: 8, lineHeight: 1, opacity: 0.6 }}>
+          {collapsed ? '▶' : '▼'}
+        </span>
+        <span style={{ color: theme.accent, fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1, opacity: 0.85 }}>
+          {cat}
+        </span>
+        {collapsed && (
+          <span style={{ color: theme.textMuted, fontSize: 9, marginLeft: 'auto' }}>
+            {defs.length}
+          </span>
+        )}
+      </button>
+      {!collapsed && (
+        <div style={{ paddingBottom: 4 }}>
+          {defs.map(def => (
+            <PaletteBlock key={def.id} def={def} onPointerDown={onPointerDown} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── PackageRow ────────────────────────────────────────────────────────────────
+
+function PackageRow({ pkg, loaded, toggling, onToggle }: {
+  pkg: PackageInfo;
+  loaded: LoadedPackage | undefined;
+  toggling: boolean;
+  onToggle: (pkg: PackageInfo, currentlyLoaded: boolean) => void;
+}) {
+  const theme = useTheme();
+  const isLoaded = !!loaded;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+      gap: 8, padding: '10px 12px', marginBottom: 6,
+      background: isLoaded ? theme.pkgActiveBg : theme.pkgBg,
+      border: `1px solid ${isLoaded ? theme.pkgActiveBorder : theme.pkgBorder}`,
+      borderRadius: 5,
+    }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+          <span style={{ color: isLoaded ? theme.pkgActiveText : theme.pkgText, fontSize: 11, fontWeight: 'bold', letterSpacing: 0.3 }}>
+            {pkg.name}
+          </span>
+          {loaded && loaded.conflictIds.length > 0 && (
+            <span title={`${loaded.conflictIds.length} block ID(s) skipped due to conflicts`}
+              style={{ fontSize: 9, color: theme.accent, border: `1px solid ${theme.accent}`, borderRadius: 3, padding: '1px 4px', opacity: 0.7 }}>
+              ⚠ {loaded.conflictIds.length}
+            </span>
+          )}
+        </div>
+        <div style={{ color: theme.pkgSubText, fontSize: 10 }}>
+          {isLoaded
+            ? `${loaded!.blockIds.length} block${loaded!.blockIds.length !== 1 ? 's' : ''} active`
+            : pkg.description}
+        </div>
+      </div>
+      <button
+        disabled={toggling}
+        onClick={() => onToggle(pkg, isLoaded)}
+        title={isLoaded ? `Remove ${pkg.name}` : `Add ${pkg.name}`}
+        style={{
+          flexShrink: 0, marginTop: 1,
+          width: 22, height: 22,
+          background: 'none',
+          border: `1px solid ${isLoaded ? '#804040' : '#407040'}`,
+          borderRadius: 4,
+          color: isLoaded ? '#c05050' : '#508050',
+          fontSize: 16, lineHeight: 1,
+          cursor: toggling ? 'wait' : 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: 0, opacity: toggling ? 0.4 : 1,
+          transition: 'opacity 0.1s',
+        }}
+      >
+        {toggling ? '…' : isLoaded ? '×' : '+'}
+      </button>
+    </div>
+  );
+}
+
+// ── BlockPalette ──────────────────────────────────────────────────────────────
+
+type Tab = 'blocks' | 'packages';
+
+export default function BlockPalette({
+  onPointerDown, isDropTarget,
+  registryVersion, availablePackages, loadedPackages, onPackageToggle,
+}: Props) {
+  const theme = useTheme();
+  const [tab, setTab]                               = useState<Tab>('blocks');
+  const [searchQuery, setSearchQuery]               = useState('');
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [togglingPackageId, setTogglingPackageId]   = useState<string | null>(null);
+
+  const allDefs    = useMemo(() => getAllDefinitions(), [registryVersion]);
+  const categories = useMemo(() => getCategories(),    [registryVersion]);
+
+  const query = searchQuery.trim().toLowerCase();
+  const filteredDefs = query ? allDefs.filter(d => d.name.toLowerCase().includes(query)) : null;
+
+  function toggleCategory(cat: string) {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev);
+      next.has(cat) ? next.delete(cat) : next.add(cat);
+      return next;
+    });
+  }
+
+  async function handleToggle(pkg: PackageInfo, currentlyLoaded: boolean) {
+    setTogglingPackageId(pkg.id);
+    try { await onPackageToggle(pkg, currentlyLoaded); }
+    finally { setTogglingPackageId(null); }
+  }
+
+  const loadedPkgMap = new Map(loadedPackages.map(lp => [lp.info.id, lp]));
+  const loadedCount  = loadedPackages.filter(lp => lp.info.id !== '__core__').length;
+
+  const tabStyle = (t: Tab): React.CSSProperties => ({
+    flex: 1, background: 'none', border: 'none',
+    borderBottom: `2px solid ${tab === t ? theme.accent : 'transparent'}`,
+    color: tab === t ? theme.accent : theme.textMuted,
+    fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: 1,
+    padding: '8px 0', cursor: 'pointer',
+    transition: 'color 0.15s, border-color 0.15s',
+  });
+
+  return (
+    <div style={{
+      width: 260, minWidth: 260,
+      backgroundColor: theme.paletteBg,
+      borderRight: `1px solid ${theme.border}`,
+      display: 'flex', flexDirection: 'column',
+      height: '100%', overflow: 'hidden',
+    }}>
+
+      {/* ── Tab bar ── */}
+      <div style={{ display: 'flex', borderBottom: `1px solid ${theme.border}`, flexShrink: 0, background: theme.paletteHeaderBg }}>
+        <button style={tabStyle('blocks')} onClick={() => setTab('blocks')}>Blocks</button>
+        <button style={tabStyle('packages')} onClick={() => setTab('packages')}>
+          Packages{loadedCount > 0 ? ` · ${loadedCount}` : ''}
+        </button>
+      </div>
+
+      {/* ── Blocks tab ── */}
+      {tab === 'blocks' && <>
+        <div style={{ padding: '8px 10px 6px', flexShrink: 0 }}>
+          <input
+            type="search"
+            placeholder="Search blocks…"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              background: theme.inputBg,
+              border: `1px solid ${theme.inputBorder}`,
+              borderRadius: 4,
+              color: theme.textPrimary,
+              fontSize: 11, padding: '5px 9px', outline: 'none',
+            }}
+          />
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '4px 10px 0' }}>
+          {filteredDefs ? (
+            filteredDefs.length > 0
+              ? filteredDefs.map(def => <PaletteBlock key={def.id} def={def} onPointerDown={onPointerDown} />)
+              : <div style={{ color: theme.textMuted, fontSize: 11, padding: '12px 0', textAlign: 'center' }}>No blocks match</div>
+          ) : (
+            categories.map(cat => (
+              <CategorySection
+                key={cat} cat={cat}
+                defs={allDefs.filter(d => d.category === cat)}
+                collapsed={collapsedCategories.has(cat)}
+                onToggle={toggleCategory}
+                onPointerDown={onPointerDown}
+              />
+            ))
+          )}
+        </div>
+
+        <div style={{
+          flexShrink: 0, margin: '8px 10px 10px', padding: '7px 10px',
+          borderRadius: 4,
+          background: isDropTarget ? theme.deleteActiveBg : 'transparent',
+          border: `1px dashed ${isDropTarget ? theme.deleteActiveBorder : theme.deleteBorder}`,
+          color: isDropTarget ? theme.deleteActiveText : theme.deleteText,
+          textAlign: 'center', fontSize: 10, fontWeight: 'bold', letterSpacing: 0.5,
+          textTransform: 'uppercase',
+          transition: 'background 0.12s, color 0.12s, border-color 0.12s',
+          pointerEvents: 'none', userSelect: 'none',
+        }}>
+          {isDropTarget ? 'Release to delete' : 'Drag here to delete'}
+        </div>
+      </>}
+
+      {/* ── Packages tab ── */}
+      {tab === 'packages' && (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
+          {availablePackages.length === 0
+            ? <div style={{ color: theme.textMuted, fontSize: 11, textAlign: 'center', padding: '20px 0' }}>No packages available</div>
+            : availablePackages.map(pkg => (
+                <PackageRow
+                  key={pkg.id} pkg={pkg}
+                  loaded={loadedPkgMap.get(pkg.id)}
+                  toggling={togglingPackageId === pkg.id}
+                  onToggle={handleToggle}
+                />
+              ))}
+        </div>
+      )}
+    </div>
+  );
+}

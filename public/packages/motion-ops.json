@@ -1,0 +1,246 @@
+[
+  {
+    "id": "move",
+    "name": "Move",
+    "blockType": "command",
+    "params": [{ "name": "steps", "type": "number" }],
+    "category": "Motion",
+    "color": "#4C97FF"
+  },
+  {
+    "id": "turn-cw",
+    "name": "Turn CW",
+    "blockType": "command",
+    "params": [{ "name": "degrees", "type": "number" }],
+    "category": "Motion",
+    "color": "#4C97FF"
+  },
+  {
+    "id": "go-to",
+    "name": "Go To",
+    "blockType": "command",
+    "params": [
+      { "name": "x", "type": "number" },
+      { "name": "y", "type": "number" }
+    ],
+    "category": "Motion",
+    "color": "#4C97FF"
+  },
+  {
+    "id": "point-dir",
+    "name": "Point Dir",
+    "blockType": "command",
+    "params": [{ "name": "dir", "type": "number" }],
+    "category": "Motion",
+    "color": "#4C97FF"
+  },
+  {
+    "id": "say",
+    "name": "Say",
+    "blockType": "command",
+    "params": [{ "name": "message", "type": "string" }],
+    "category": "Looks",
+    "color": "#9966FF"
+  },
+  {
+    "id": "show",
+    "name": "Show",
+    "blockType": "command",
+    "params": [],
+    "category": "Looks",
+    "color": "#9966FF"
+  },
+  {
+    "id": "hide",
+    "name": "Hide",
+    "blockType": "command",
+    "params": [],
+    "category": "Looks",
+    "color": "#9966FF"
+  },
+  {
+    "id": "set-color",
+    "name": "Set Color",
+    "blockType": "command",
+    "params": [{ "name": "color", "type": "string" }],
+    "category": "Looks",
+    "color": "#9966FF"
+  },
+  {
+    "id": "wait",
+    "name": "Wait",
+    "blockType": "command",
+    "params": [{ "name": "secs", "type": "number" }],
+    "category": "Control",
+    "color": "#FFAB19"
+  },
+  {
+    "id": "repeat",
+    "name": "Repeat",
+    "blockType": "command",
+    "params": [{ "name": "times", "type": "number" }],
+    "category": "Control",
+    "color": "#FFAB19"
+  },
+  {
+    "id": "if",
+    "name": "If",
+    "blockType": "command",
+    "params": [{ "name": "cond", "type": "boolean" }],
+    "category": "Control",
+    "color": "#FFAB19"
+  },
+  {
+    "id": "x-position",
+    "name": "X Position",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [],
+    "category": "Sensing",
+    "color": "#5CB1D6"
+  },
+  {
+    "id": "y-position",
+    "name": "Y Position",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [],
+    "category": "Sensing",
+    "color": "#5CB1D6"
+  },
+  {
+    "id": "direction",
+    "name": "Direction",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [],
+    "category": "Sensing",
+    "color": "#5CB1D6"
+  },
+  {
+    "id": "timer",
+    "name": "Timer",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [],
+    "category": "Sensing",
+    "color": "#5CB1D6"
+  },
+  {
+    "id": "is-touching",
+    "name": "Is Touching",
+    "blockType": "query",
+    "returnType": "boolean",
+    "params": [{ "name": "obj", "type": "object" }],
+    "category": "Sensing",
+    "color": "#5CB1D6"
+  },
+  {
+    "id": "key-pressed",
+    "name": "Key Pressed",
+    "blockType": "query",
+    "returnType": "boolean",
+    "params": [{ "name": "key", "type": "string" }],
+    "category": "Sensing",
+    "color": "#5CB1D6"
+  },
+  {
+    "id": "get-name",
+    "name": "Get Name",
+    "blockType": "query",
+    "returnType": "string",
+    "params": [],
+    "category": "Sensing",
+    "color": "#5CB1D6"
+  },
+  {
+    "id": "get-self",
+    "name": "Get Self",
+    "blockType": "query",
+    "returnType": "object",
+    "params": [],
+    "category": "Sensing",
+    "color": "#5CB1D6"
+  },
+  {
+    "id": "add",
+    "name": "Add",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [
+      { "name": "a", "type": "number" },
+      { "name": "b", "type": "number" }
+    ],
+    "category": "Operators",
+    "color": "#59C059"
+  },
+  {
+    "id": "subtract",
+    "name": "Subtract",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [
+      { "name": "a", "type": "number" },
+      { "name": "b", "type": "number" }
+    ],
+    "category": "Operators",
+    "color": "#59C059"
+  },
+  {
+    "id": "multiply",
+    "name": "Multiply",
+    "blockType": "query",
+    "returnType": "number",
+    "params": [
+      { "name": "a", "type": "number" },
+      { "name": "b", "type": "number" }
+    ],
+    "category": "Operators",
+    "color": "#59C059"
+  },
+  {
+    "id": "and",
+    "name": "And",
+    "blockType": "query",
+    "returnType": "boolean",
+    "params": [
+      { "name": "a", "type": "boolean" },
+      { "name": "b", "type": "boolean" }
+    ],
+    "category": "Operators",
+    "color": "#59C059"
+  },
+  {
+    "id": "or",
+    "name": "Or",
+    "blockType": "query",
+    "returnType": "boolean",
+    "params": [
+      { "name": "a", "type": "boolean" },
+      { "name": "b", "type": "boolean" }
+    ],
+    "category": "Operators",
+    "color": "#59C059"
+  },
+  {
+    "id": "not",
+    "name": "Not",
+    "blockType": "query",
+    "returnType": "boolean",
+    "params": [{ "name": "cond", "type": "boolean" }],
+    "category": "Operators",
+    "color": "#59C059"
+  },
+  {
+    "id": "join",
+    "name": "Join",
+    "blockType": "query",
+    "returnType": "string",
+    "params": [
+      { "name": "a", "type": "string" },
+      { "name": "b", "type": "string" }
+    ],
+    "category": "Operators",
+    "color": "#59C059"
+  }
+]
