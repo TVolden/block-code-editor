@@ -11,15 +11,16 @@
  *                clicks a block sequence
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { PlacedBlock, ParamSlot, SerializedCanvas } from '../types';
-export type { SerializedCanvas } from '../types';
+export type { SerializedCanvas, BlockDefinition } from '../types';
 export { default as CardDesigner } from '../carddesigner/CardDesigner';
 export { default as CardPreview } from '../carddesigner/CardPreview';
 export type { CardDesign, CardMeta } from '../carddesigner/cardDesignTypes';
 export { defaultCardDesign } from '../carddesigner/cardDesignTypes';
 import {
-  loadBlockRegistry, loadPackage, unloadPackage, getLoadedPackages, getDefinition,
+  loadBlockRegistry, loadPackage, unloadPackage, getLoadedPackages, getDefinition, tryGetDefinition,
+  loadInlinePackage,
 } from '../blockRegistry';
 import type { PackageInfo, LoadedPackage } from '../blockRegistry';
 import { getBlockWidth, getBlockHeight, getSocketPositions, QUERY_H } from '../utils/blockLayout';
@@ -36,6 +37,8 @@ import ThemeSwitcher from '../components/ThemeSwitcher';
 
 interface Props {
   blocksUrl?: string;
+  /** Load multiple block packages in order. Takes precedence over blocksUrl. */
+  blocksUrls?: string[];
   onRun?: (lines: string[]) => void;
   onThemeChange?: (theme: Theme) => void;
   /** Optional nav tabs rendered in the title bar between the subtitle and theme switcher. */
@@ -58,6 +61,12 @@ interface Props {
    * (e.g. to implement its own Save button).
    */
   getStateRef?: React.MutableRefObject<(() => SerializedCanvas) | null>;
+  /**
+   * Extra block definitions injected into the registry after the core blocks
+   * load. Registered under the synthetic package '__inline__'. Changing this
+   * prop unregisters the previous set and registers the new one.
+   */
+  additionalBlocks?: import('../types').BlockDefinition[];
 }
 
 /** Where a block chain can snap onto another block's bottom connector. */
@@ -219,7 +228,7 @@ function DragGhost({ ghostPos, dragRef, blocks }: DragGhostProps) {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onThemeChange, navTabs, initialState, onSave, themeId, hideTitleBar, getStateRef }: Props) {
+export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, onRun, onThemeChange, navTabs, initialState, onSave, themeId, hideTitleBar, getStateRef, additionalBlocks }: Props) {
   const [theme, setTheme] = useState<Theme>(() => {
     if (themeId) return THEMES.find(t => t.id === themeId) ?? darkTheme;
     const saved = localStorage.getItem('cardcq-theme');
@@ -245,6 +254,17 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onTheme
     });
     return map;
   });
+  // Which "start" block definition IDs are already placed on the canvas.
+  // Used to enforce one-instance-per-event-type.
+  const placedStartIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const block of blocks.values()) {
+      const def = tryGetDefinition(block.definitionId);
+      if (def?.blockType === 'start') ids.add(block.definitionId);
+    }
+    return ids;
+  }, [blocks]);
+
   const [ghostPos, setGhostPos]         = useState<{ x: number; y: number; defId: string } | null>(null);
   const [draggingIds, setDraggingIds]   = useState<Set<string>>(new Set());
   const [isOverPalette, setIsOverPalette] = useState(false);
@@ -264,11 +284,30 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onTheme
 
   // ── Startup ─────────────────────────────────────────────────────────────────
 
+  const resolvedUrls = blocksUrls ?? [blocksUrl];
+  const resolvedUrlsKey = resolvedUrls.join('|');
+
   useEffect(() => {
-    loadBlockRegistry(blocksUrl)
-      .then(() => { setReady(true); setLoadedPackages(getLoadedPackages()); })
+    const urls = resolvedUrlsKey.split('|');
+    setReady(false);
+    setLoadError(null);
+    // First URL clears registry and loads as core; subsequent URLs append as named packages.
+    loadBlockRegistry(urls[0])
+      .then(async () => {
+        for (let i = 1; i < urls.length; i++) {
+          await loadPackage({
+            id: `__extra_${i}__`,
+            name: `Extra ${i}`,
+            description: '',
+            url: urls[i],
+            builtIn: true,
+          });
+        }
+        setReady(true);
+        setLoadedPackages(getLoadedPackages());
+      })
       .catch(err => setLoadError(String(err)));
-  }, [blocksUrl]);
+  }, [resolvedUrlsKey]);
 
   useEffect(() => {
     fetch('/packages.json')
@@ -276,6 +315,21 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onTheme
       .then(setAvailablePackages)
       .catch(() => { /* packages.json is optional */ });
   }, []);
+
+  // ── Inline (additional) blocks ───────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!ready) return;
+    unloadPackage('__inline__');
+    if (additionalBlocks && additionalBlocks.length > 0) {
+      loadInlinePackage(
+        { id: '__inline__', name: 'Inline', description: '', url: '', builtIn: true },
+        additionalBlocks,
+      );
+    }
+    setLoadedPackages(getLoadedPackages());
+    setRegistryVersion(v => v + 1);
+  }, [additionalBlocks, ready]);
 
   // ── Package toggle ───────────────────────────────────────────────────────────
 
@@ -537,6 +591,13 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onTheme
       if (drag.type === 'palette') {
         if (e.clientX < canvasRect.left || e.clientX > canvasRect.right ||
             e.clientY < canvasRect.top  || e.clientY > canvasRect.bottom) return;
+
+        // Enforce one instance per event (start) block.
+        if (def?.blockType === 'start') {
+          const alreadyPlaced = [...blocks.values()].some(b => b.definitionId === drag.defId);
+          if (alreadyPlaced) return;
+        }
+
         const newBlock = createBlock(drag.defId, dropX, dropY);
 
         if (def.blockType !== 'query') {
@@ -697,6 +758,7 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onTheme
           availablePackages={availablePackages}
           loadedPackages={loadedPackages}
           onPackageToggle={handlePackageToggle}
+          placedStartIds={placedStartIds}
         />
         <Canvas
           ref={canvasRef}

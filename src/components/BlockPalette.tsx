@@ -15,15 +15,18 @@ interface Props {
   availablePackages: PackageInfo[];
   loadedPackages: LoadedPackage[];
   onPackageToggle: (pkg: PackageInfo, currentlyLoaded: boolean) => Promise<void>;
+  /** Definition IDs of start (event) blocks already placed on the canvas. */
+  placedStartIds: Set<string>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 // ── PaletteBlock ──────────────────────────────────────────────────────────────
 
-function PaletteBlock({ def, onPointerDown }: {
+function PaletteBlock({ def, onPointerDown, isPlaced }: {
   def: BlockDefinition;
   onPointerDown: Props['onPointerDown'];
+  isPlaced?: boolean;
 }) {
   const theme = useTheme();
   const w     = getBlockWidth(def);
@@ -39,10 +42,11 @@ function PaletteBlock({ def, onPointerDown }: {
 
   return (
     <div
-      style={{ marginBottom: 6, userSelect: 'none' }}
-      onPointerDown={(e) => onPointerDown(e, def.id)}
+      style={{ marginBottom: 6, userSelect: 'none', position: 'relative', opacity: isPlaced ? 0.4 : 1 }}
+      onPointerDown={isPlaced ? undefined : (e) => onPointerDown(e, def.id)}
+      title={isPlaced ? 'Already on canvas — only one instance allowed' : undefined}
     >
-      <svg width={w + 2} height={h + 8} style={{ display: 'block', cursor: 'grab', overflow: 'visible' }}>
+      <svg width={w + 2} height={h + 8} style={{ display: 'block', cursor: isPlaced ? 'not-allowed' : 'grab', overflow: 'visible' }}>
         <defs>
           <clipPath id={clipId}>
             <path d={path} />
@@ -61,6 +65,16 @@ function PaletteBlock({ def, onPointerDown }: {
               </tspan>
             )}
           </text>
+          {isPlaced && (
+            <text
+              x={w / 2} y={h / 2 + 4}
+              textAnchor="middle"
+              fill={theme.textMuted} fontSize={9} fontFamily="sans-serif"
+              style={{ userSelect: 'none', pointerEvents: 'none' }}
+            >
+              ✓ on canvas
+            </text>
+          )}
           {sockets.map((sock) => {
             const paramName = def.params[sock.index]?.name;
             const isCustom  = !PRIMITIVE_TYPES.has(sock.type);
@@ -92,12 +106,13 @@ function PaletteBlock({ def, onPointerDown }: {
 
 // ── CategorySection ───────────────────────────────────────────────────────────
 
-function CategorySection({ cat, defs, collapsed, onToggle, onPointerDown }: {
+function CategorySection({ cat, defs, collapsed, onToggle, onPointerDown, placedStartIds }: {
   cat: string;
   defs: BlockDefinition[];
   collapsed: boolean;
   onToggle: (cat: string) => void;
   onPointerDown: Props['onPointerDown'];
+  placedStartIds: Set<string>;
 }) {
   const theme = useTheme();
   return (
@@ -128,7 +143,10 @@ function CategorySection({ cat, defs, collapsed, onToggle, onPointerDown }: {
       {!collapsed && (
         <div style={{ paddingBottom: 4 }}>
           {defs.map(def => (
-            <PaletteBlock key={def.id} def={def} onPointerDown={onPointerDown} />
+            <PaletteBlock
+              key={def.id} def={def} onPointerDown={onPointerDown}
+              isPlaced={def.blockType === 'start' && placedStartIds.has(def.id)}
+            />
           ))}
         </div>
       )}
@@ -203,6 +221,7 @@ type Tab = 'blocks' | 'packages';
 export default function BlockPalette({
   onPointerDown, isDropTarget,
   registryVersion, availablePackages, loadedPackages, onPackageToggle,
+  placedStartIds,
 }: Props) {
   const theme = useTheme();
   const [tab, setTab]                               = useState<Tab>('blocks');
@@ -281,7 +300,12 @@ export default function BlockPalette({
         <div style={{ flex: 1, overflowY: 'auto', padding: '4px 10px 0' }}>
           {filteredDefs ? (
             filteredDefs.length > 0
-              ? filteredDefs.map(def => <PaletteBlock key={def.id} def={def} onPointerDown={onPointerDown} />)
+              ? filteredDefs.map(def => (
+                  <PaletteBlock
+                    key={def.id} def={def} onPointerDown={onPointerDown}
+                    isPlaced={def.blockType === 'start' && placedStartIds.has(def.id)}
+                  />
+                ))
               : <div style={{ color: theme.textMuted, fontSize: 11, padding: '12px 0', textAlign: 'center' }}>No blocks match</div>
           ) : (
             categories.map(cat => (
@@ -291,6 +315,7 @@ export default function BlockPalette({
                 collapsed={collapsedCategories.has(cat)}
                 onToggle={toggleCategory}
                 onPointerDown={onPointerDown}
+                placedStartIds={placedStartIds}
               />
             ))
           )}

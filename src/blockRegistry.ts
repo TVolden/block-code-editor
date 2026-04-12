@@ -77,12 +77,34 @@ export function getDefinition(id: string): BlockDefinition {
   return def;
 }
 
+export function tryGetDefinition(id: string): BlockDefinition | undefined {
+  return registry.get(id);
+}
+
 export function getAllDefinitions(): BlockDefinition[] {
   return [...registry.values()];
 }
 
 export function getCategories(): string[] {
   return [...new Set(getAllDefinitions().map(d => d.category))];
+}
+
+/** Register block definitions directly (no URL fetch). First-registered wins on conflicts. */
+export function loadInlinePackage(info: PackageInfo, defs: BlockDefinition[]): LoadedPackage {
+  const blockIds: string[]    = [];
+  const conflictIds: string[] = [];
+  for (const def of defs) {
+    if (registry.has(def.id)) {
+      conflictIds.push(def.id);
+    } else {
+      registry.set(def.id, def);
+      blockPackageMap.set(def.id, info.id);
+      blockIds.push(def.id);
+    }
+  }
+  const loaded: LoadedPackage = { info, blockIds, conflictIds };
+  loadedPkgMap.set(info.id, loaded);
+  return loaded;
 }
 
 // ── Bootstrap helper (backward-compatible) ────────────────────────────────────
