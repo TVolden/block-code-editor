@@ -13,13 +13,18 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import type { PlacedBlock, ParamSlot, SerializedCanvas } from '../types';
+export type { SerializedCanvas } from '../types';
+export { default as CardDesigner } from '../carddesigner/CardDesigner';
+export { default as CardPreview } from '../carddesigner/CardPreview';
+export type { CardDesign, CardMeta } from '../carddesigner/cardDesignTypes';
+export { defaultCardDesign } from '../carddesigner/cardDesignTypes';
 import {
   loadBlockRegistry, loadPackage, unloadPackage, getLoadedPackages, getDefinition,
 } from '../blockRegistry';
 import type { PackageInfo, LoadedPackage } from '../blockRegistry';
 import { getBlockWidth, getBlockHeight, getSocketPositions, QUERY_H } from '../utils/blockLayout';
 import { darkTheme, THEMES } from '../theme';
-import type { Theme } from '../theme';
+import type { Theme, ThemeId } from '../theme';
 import { ThemeContext, useTheme } from '../ThemeContext';
 import { commandBlockPath, hatBlockPath, queryBlockPath } from '../utils/blockShapes';
 import BlockPalette from '../components/BlockPalette';
@@ -39,6 +44,20 @@ interface Props {
   initialState?: SerializedCanvas;
   /** Called with the current canvas state when the user clicks Save. */
   onSave?: (state: SerializedCanvas) => void;
+  /**
+   * When provided, the editor runs in controlled-theme mode: it applies this
+   * theme and hides the built-in theme-switcher buttons.  The platform is then
+   * responsible for toggling dark/light.
+   */
+  themeId?: ThemeId;
+  /** When true, the built-in title bar is not rendered. */
+  hideTitleBar?: boolean;
+  /**
+   * When provided, the ref is populated with a function that returns the
+   * current canvas state. Lets a parent component read state on demand
+   * (e.g. to implement its own Save button).
+   */
+  getStateRef?: React.MutableRefObject<(() => SerializedCanvas) | null>;
 }
 
 /** Where a block chain can snap onto another block's bottom connector. */
@@ -200,11 +219,19 @@ function DragGhost({ ghostPos, dragRef, blocks }: DragGhostProps) {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onThemeChange, navTabs, initialState, onSave }: Props) {
+export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onThemeChange, navTabs, initialState, onSave, themeId, hideTitleBar, getStateRef }: Props) {
   const [theme, setTheme] = useState<Theme>(() => {
+    if (themeId) return THEMES.find(t => t.id === themeId) ?? darkTheme;
     const saved = localStorage.getItem('cardcq-theme');
     return THEMES.find(t => t.id === saved) ?? darkTheme;
   });
+
+  // Keep theme in sync when the caller changes the themeId prop.
+  useEffect(() => {
+    if (!themeId) return;
+    const next = THEMES.find(t => t.id === themeId) ?? darkTheme;
+    setTheme(next);
+  }, [themeId]);
   const [ready, setReady]         = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -225,6 +252,11 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onTheme
   const [registryVersion, setRegistryVersion]     = useState(0);
   const [availablePackages, setAvailablePackages] = useState<PackageInfo[]>([]);
   const [loadedPackages, setLoadedPackages]       = useState<LoadedPackage[]>([]);
+
+  // Keep getStateRef current so the parent can read canvas state on demand.
+  useEffect(() => {
+    if (getStateRef) getStateRef.current = () => ({ blocks: [...blocks.entries()] });
+  }, [blocks, getStateRef]);
 
   const dragRef          = useRef<DragState | null>(null);
   const isOverPaletteRef = useRef(false);
@@ -373,9 +405,9 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onTheme
 
   const changeTheme = useCallback((t: Theme) => {
     setTheme(t);
-    localStorage.setItem('cardcq-theme', t.id);
+    if (!themeId) localStorage.setItem('cardcq-theme', t.id);
     onThemeChange?.(t);
-  }, [onThemeChange]);
+  }, [onThemeChange, themeId]);
 
   const handlePalettePointerDown = useCallback((e: React.PointerEvent, defId: string) => {
     e.preventDefault();
@@ -624,6 +656,7 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onTheme
     <ThemeContext.Provider value={theme}>
     <div style={outerStyle}>
       {/* ── Title bar ── */}
+      {!hideTitleBar && (
       <div style={{
         flexShrink: 0,
         display: 'flex', alignItems: 'center', gap: 10,
@@ -652,9 +685,10 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', onRun, onTheme
               Save
             </button>
           )}
-          <ThemeSwitcher onSelect={changeTheme} />
+          {!themeId && <ThemeSwitcher onSelect={changeTheme} />}
         </div>
       </div>
+      )}
       <div style={innerStyle}>
         <BlockPalette
           onPointerDown={handlePalettePointerDown}

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useTheme } from '../ThemeContext';
-import type { Theme } from '../theme';
+import { ThemeContext, useTheme } from '../ThemeContext';
+import { darkTheme, THEMES } from '../theme';
+import type { Theme, ThemeId } from '../theme';
 import type { CardDesign, CardElement, CardMeta, TextEl, ImageEl, RectEl, CircleEl } from './cardDesignTypes';
 import { defaultCardDesign, genId, CARD_W } from './cardDesignTypes';
 import CardCanvas from './CardCanvas';
@@ -24,47 +25,122 @@ function loadDesign(): CardDesign {
 interface Props {
   onThemeChange?: (t: Theme) => void;
   navTabs?: React.ReactNode;
+  /**
+   * When provided, the designer syncs its theme to the platform's theme and
+   * sets up its own ThemeContext.Provider (enabling standalone use outside
+   * of the editor's App shell).
+   */
+  themeId?: ThemeId;
+  /** When true, the built-in title bar is not rendered. */
+  hideTitleBar?: boolean;
+  /**
+   * When true, only the left meta panel is rendered (no card canvas or
+   * element-properties panel). Width shrinks to match the panel.
+   */
+  compactMode?: boolean;
+  /**
+   * When true, only the canvas and element-properties panel are rendered
+   * (no title bar, no meta panel). The component expands to fill available
+   * space. Combine with compactMode on a sibling instance and shared
+   * controlled state to split the designer into a persistent left panel and
+   * a tab-conditional workspace.
+   */
+  workspaceOnly?: boolean;
+  // ── Controlled state ─────────────────────────────────────────────────────
+  /** External design state. When provided the component is controlled. */
+  design?: CardDesign;
+  onDesignChange?: (design: CardDesign) => void;
+  /** External selection state. Used together with design for controlled mode. */
+  selectedId?: string | null;
+  onSelectedIdChange?: (id: string | null) => void;
+  // ── Export / Import overrides ─────────────────────────────────────────────
+  /**
+   * When provided, replaces the built-in JSON export with a custom handler
+   * (e.g. YAML export with combined block-program state from the platform).
+   */
+  onExport?: () => void;
+  /**
+   * When provided, replaces the built-in JSON import with a custom handler.
+   * The handler is responsible for opening a file picker and calling
+   * onDesignChange with the loaded design.
+   */
+  onImport?: () => void;
 }
 
-export default function CardDesigner({ onThemeChange, navTabs }: Props) {
-  const theme = useTheme();
-  const [design, setDesign] = useState<CardDesign>(loadDesign);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+export default function CardDesigner({
+  onThemeChange, navTabs, themeId, hideTitleBar, compactMode, workspaceOnly,
+  design: externalDesign, onDesignChange,
+  selectedId: externalSelectedId, onSelectedIdChange,
+  onExport, onImport,
+}: Props) {
+  // When themeId is provided we manage our own theme; otherwise we read from
+  // the nearest ThemeContext.Provider (e.g. the one in App.tsx).
+  const parentTheme = useTheme();
+  const [standaloneTheme, setStandaloneTheme] = useState<Theme>(() =>
+    themeId ? (THEMES.find(t => t.id === themeId) ?? darkTheme) : darkTheme
+  );
+  useEffect(() => {
+    if (!themeId) return;
+    setStandaloneTheme(THEMES.find(t => t.id === themeId) ?? darkTheme);
+  }, [themeId]);
+  const theme = themeId ? standaloneTheme : parentTheme;
 
-  // Persist to localStorage after changes settle. Compact JSON (no pretty-print)
-  // keeps serialisation fast during drag (60 Hz pointer events).
+  // ── State: uncontrolled vs controlled ────────────────────────────────────────
+  const isControlled = externalDesign !== undefined;
+
+  const [internalDesign, setInternalDesign] = useState<CardDesign>(loadDesign);
+  const [internalSelectedId, setInternalSelectedId] = useState<string | null>(null);
+
+  const design    = isControlled ? externalDesign! : internalDesign;
+  const selectedId = externalSelectedId !== undefined ? externalSelectedId : internalSelectedId;
+
+  function applyDesign(updater: (prev: CardDesign) => CardDesign) {
+    if (isControlled) {
+      onDesignChange?.(updater(design));
+    } else {
+      setInternalDesign(updater);
+    }
+  }
+  function applySelectedId(id: string | null) {
+    if (onSelectedIdChange) onSelectedIdChange(id);
+    else setInternalSelectedId(id);
+  }
+
+  // Persist to localStorage only in uncontrolled mode.
+  // Compact JSON keeps serialisation fast during drag (60 Hz pointer events).
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    if (isControlled) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(design));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(internalDesign));
     }, 150);
-  }, [design]);
+  }, [internalDesign, isControlled]);
 
   // ── Mutators ─────────────────────────────────────────────────────────────────
 
   function updateMeta(patch: Partial<CardMeta>) {
-    setDesign(d => ({ ...d, meta: { ...d.meta, ...patch } }));
+    applyDesign(d => ({ ...d, meta: { ...d.meta, ...patch } }));
   }
   function updateBg(patch: Partial<CardDesign['background']>) {
-    setDesign(d => ({ ...d, background: { ...d.background, ...patch } }));
+    applyDesign(d => ({ ...d, background: { ...d.background, ...patch } }));
   }
   function updateEl(id: string, patch: Partial<CardElement>) {
-    setDesign(d => ({
+    applyDesign(d => ({
       ...d,
       elements: d.elements.map(el => el.id === id ? { ...el, ...patch } as CardElement : el),
     }));
   }
   function deleteEl(id: string) {
-    setDesign(d => ({ ...d, elements: d.elements.filter(el => el.id !== id) }));
-    setSelectedId(null);
+    applyDesign(d => ({ ...d, elements: d.elements.filter(el => el.id !== id) }));
+    applySelectedId(null);
   }
   function addElement(el: CardElement) {
-    setDesign(d => ({ ...d, elements: [...d.elements, el] }));
-    setSelectedId(el.id);
+    applyDesign(d => ({ ...d, elements: [...d.elements, el] }));
+    applySelectedId(el.id);
   }
   function moveZ(id: string, dir: 1 | -1) {
-    setDesign(d => {
+    applyDesign(d => {
       const idx = d.elements.findIndex(el => el.id === id);
       const target = idx + dir;
       if (target < 0 || target >= d.elements.length) return d;
@@ -92,7 +168,7 @@ export default function CardDesigner({ onThemeChange, navTabs }: Props) {
       else return;
 
       e.preventDefault();
-      setDesign(prev => ({
+      applyDesign(prev => ({
         ...prev,
         elements: prev.elements.map(el =>
           el.id === selectedId ? { ...el, x: el.x + dx, y: el.y + dy } : el
@@ -161,8 +237,8 @@ export default function CardDesigner({ onThemeChange, navTabs }: Props) {
         try {
           const d = JSON.parse(ev.target?.result as string) as CardDesign;
           if (!Array.isArray(d.meta.customFields)) d.meta.customFields = [];
-          setDesign(d);
-          setSelectedId(null);
+          applyDesign(() => d);
+          applySelectedId(null);
         } catch { alert('Invalid JSON file'); }
       };
       reader.readAsText(file);
@@ -173,14 +249,45 @@ export default function CardDesigner({ onThemeChange, navTabs }: Props) {
   const sel = design.elements.find(el => el.id === selectedId) ?? null;
   const inputStyle = inputStyleFor(theme);
 
+  // workspaceOnly: render only canvas + right panel, expanding to fill space
+  // compactMode:   render only the left meta panel, fixed width
+  // default:       render all three columns (original behaviour)
+  const outerWidth = compactMode ? { width: PANEL_W, flexShrink: 0 as const } : { flex: 1, minWidth: 0 };
+
+  const workspaceProps = {
+    design, selectedId, sel, theme,
+    onSelect: applySelectedId,
+    onMove:   (id: string, x: number, y: number) => updateEl(id, { x, y }),
+    onResize: (id: string, x: number, y: number, w: number, h: number) => updateEl(id, { x, y, w, h }),
+    onUpdate: (patch: Partial<CardElement>) => { if (sel) updateEl(sel.id, patch); },
+    onDelete: () => { if (sel) deleteEl(sel.id); },
+    onMoveZ:  (dir: 1 | -1) => { if (sel) moveZ(sel.id, dir); },
+    onUpdateBg: updateBg,
+    onAddText: addText, onAddRect: addRect, onAddCircle: addCircle, onAddImage: addImage,
+  };
+
+  if (workspaceOnly) {
+    // Design tools + canvas + element-properties, no title bar, no meta panel.
+    return (
+      <ThemeContext.Provider value={theme}>
+      <div style={{ display: 'flex', flex: 1, minWidth: 0, minHeight: 0, overflow: 'hidden', fontFamily: 'system-ui, sans-serif' }}>
+        <WorkspaceColumns {...workspaceProps} />
+      </div>
+      </ThemeContext.Provider>
+    );
+  }
+
   return (
+    <ThemeContext.Provider value={theme}>
     <div style={{
       display: 'flex', flexDirection: 'column',
-      flex: 1, minHeight: 0, overflow: 'hidden',
+      ...outerWidth,
+      overflow: 'hidden',
       background: theme.appBg, color: theme.textPrimary,
       fontFamily: 'system-ui, sans-serif',
     }}>
       {/* ── Title bar ── */}
+      {!hideTitleBar && (
       <div style={{
         flexShrink: 0, display: 'flex', alignItems: 'center', gap: 10,
         padding: '0 14px', height: 38,
@@ -197,8 +304,9 @@ export default function CardDesigner({ onThemeChange, navTabs }: Props) {
           <ThemeSwitcher onSelect={t => onThemeChange?.(t)} />
         </div>
       </div>
+      )}
 
-      {/* ── Three-column body ── */}
+      {/* ── Body ── */}
       <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
         {/* ── Left panel: meta + tools ── */}
@@ -276,110 +384,171 @@ export default function CardDesigner({ onThemeChange, navTabs }: Props) {
               </div>
             </Section>
 
-            <Section>
-              <SectionHead>Background</SectionHead>
-              <Field lbl="Color">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <input type="color" value={design.background.color}
-                    onChange={e => updateBg({ color: e.target.value })}
-                    style={{ width: 32, height: 24, border: 'none', padding: 0, cursor: 'pointer', background: 'none' }} />
-                  <span style={{ fontSize: 11, color: theme.textMuted }}>{design.background.color}</span>
-                </div>
-              </Field>
-              <Field lbl="Image URL">
-                <input type="text" value={design.background.imageUrl} style={inputStyle}
-                  placeholder="https://…"
-                  onChange={e => updateBg({ imageUrl: e.target.value })} />
-              </Field>
-            </Section>
-
-            <Section>
-              <SectionHead>Add Element</SectionHead>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-                {([
-                  { label: 'Text',   icon: 'T',  fn: addText   },
-                  { label: 'Rect',   icon: '□',  fn: addRect   },
-                  { label: 'Circle', icon: '○',  fn: addCircle },
-                  { label: 'Image',  icon: '⬛', fn: addImage  },
-                ] as const).map(({ label, icon, fn }) => (
-                  <button key={label} onClick={fn} style={{
-                    background: theme.blockBody, border: `1px solid ${theme.border}`,
-                    color: theme.textPrimary, borderRadius: 4, padding: '7px 4px',
-                    cursor: 'pointer', fontSize: 11,
-                    display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'center',
-                  }}>
-                    <span style={{ fontFamily: 'monospace', fontSize: 13 }}>{icon}</span>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </Section>
-
-            <div>
-              <SectionHead>Data</SectionHead>
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button onClick={exportJson} style={{
-                  flex: 1, background: theme.accent, border: 'none',
-                  color: '#0e1118', borderRadius: 4, padding: '6px',
-                  cursor: 'pointer', fontSize: 11, fontWeight: 600,
-                }}>Export JSON</button>
-                <button onClick={importJson} style={{
-                  flex: 1, background: theme.blockBody,
-                  border: `1px solid ${theme.border}`,
-                  color: theme.textPrimary, borderRadius: 4,
-                  padding: '6px', cursor: 'pointer', fontSize: 11,
-                }}>Import JSON</button>
-              </div>
-            </div>
-
           </div>
-        </div>
 
-        {/* ── Canvas ── */}
-        <div style={{
-          flex: 1, minWidth: 0, background: theme.canvasBg,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          overflow: 'hidden', position: 'relative',
-        }}>
+          {/* ── Export / Import ── */}
           <div style={{
-            position: 'absolute', inset: 0, pointerEvents: 'none',
-            backgroundImage: `radial-gradient(circle, ${theme.gridDot} 1px, transparent 1px)`,
-            backgroundSize: '20px 20px',
-          }} />
-          <CardCanvas
-            design={design}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-            onMove={(id, x, y) => updateEl(id, { x, y })}
-            onResize={(id, x, y, w, h) => updateEl(id, { x, y, w, h })}
-          />
-        </div>
-
-        {/* ── Right panel: element properties ── */}
-        <div style={{
-          width: PANEL_W, flexShrink: 0,
-          background: theme.paletteBg, borderLeft: `1px solid ${theme.border}`,
-          display: 'flex', flexDirection: 'column', overflow: 'hidden',
-        }}>
-          <PanelHeader>Element Properties</PanelHeader>
-          <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
-            {!sel ? (
-              <div style={{ color: theme.textMuted, fontSize: 12, textAlign: 'center', marginTop: 40, lineHeight: 1.6 }}>
-                Select an element on<br />the card to edit it
-              </div>
-            ) : (
-              <ElProperties
-                el={sel}
-                onUpdate={patch => updateEl(sel.id, patch)}
-                onDelete={() => deleteEl(sel.id)}
-                onMoveZ={dir => moveZ(sel.id, dir)}
-              />
-            )}
+            flexShrink: 0, padding: '10px 12px',
+            borderTop: `1px solid ${theme.border}`,
+            display: 'flex', gap: 6,
+          }}>
+            <button
+              onClick={onExport ?? exportJson}
+              style={{
+                flex: 1, background: theme.accent, border: 'none',
+                color: '#0e1118', borderRadius: 4, padding: '6px',
+                cursor: 'pointer', fontSize: 11, fontWeight: 600,
+              }}
+            >
+              Export
+            </button>
+            <button
+              onClick={onImport ?? importJson}
+              style={{
+                flex: 1, background: theme.blockBody,
+                border: `1px solid ${theme.border}`,
+                color: theme.textPrimary, borderRadius: 4,
+                padding: '6px', cursor: 'pointer', fontSize: 11,
+              }}
+            >
+              Import
+            </button>
           </div>
         </div>
+
+        {/* ── Design tools + canvas + right panel (hidden in compactMode) ── */}
+        {!compactMode && <WorkspaceColumns {...workspaceProps} />}
 
       </div>
     </div>
+    </ThemeContext.Provider>
+  );
+}
+
+// ── WorkspaceColumns ─────────────────────────────────────────────────────────
+// Canvas + element-properties panel, shared by the full designer and workspaceOnly mode.
+
+interface WorkspaceColumnsProps {
+  design: CardDesign;
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  onMove: (id: string, x: number, y: number) => void;
+  onResize: (id: string, x: number, y: number, w: number, h: number) => void;
+  onUpdate: (patch: Partial<CardElement>) => void;
+  onDelete: () => void;
+  onMoveZ: (dir: 1 | -1) => void;
+  sel: CardElement | null;
+  theme: Theme;
+  onUpdateBg: (patch: Partial<CardDesign['background']>) => void;
+  onAddText: () => void;
+  onAddRect: () => void;
+  onAddCircle: () => void;
+  onAddImage: () => void;
+}
+
+function WorkspaceColumns({
+  design, selectedId, onSelect, onMove, onResize,
+  onUpdate, onDelete, onMoveZ, sel, theme,
+  onUpdateBg, onAddText, onAddRect, onAddCircle, onAddImage,
+}: WorkspaceColumnsProps) {
+  const inputStyle = inputStyleFor(theme);
+
+  return (
+    <>
+      {/* ── Design tools panel ── */}
+      <div style={{
+        width: PANEL_W, flexShrink: 0,
+        background: theme.paletteBg, borderRight: `1px solid ${theme.border}`,
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      }}>
+        <PanelHeader>Design Tools</PanelHeader>
+        <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
+
+          <Section>
+            <SectionHead>Background</SectionHead>
+            <Field lbl="Color">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input type="color" value={design.background.color}
+                  onChange={e => onUpdateBg({ color: e.target.value })}
+                  style={{ width: 32, height: 24, border: 'none', padding: 0, cursor: 'pointer', background: 'none' }} />
+                <span style={{ fontSize: 11, color: theme.textMuted }}>{design.background.color}</span>
+              </div>
+            </Field>
+            <Field lbl="Image URL">
+              <input type="text" value={design.background.imageUrl} style={inputStyle}
+                placeholder="https://…"
+                onChange={e => onUpdateBg({ imageUrl: e.target.value })} />
+            </Field>
+          </Section>
+
+          <Section>
+            <SectionHead>Add Element</SectionHead>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+              {([
+                { label: 'Text',   icon: 'T',  fn: onAddText   },
+                { label: 'Rect',   icon: '□',  fn: onAddRect   },
+                { label: 'Circle', icon: '○',  fn: onAddCircle },
+                { label: 'Image',  icon: '⬛', fn: onAddImage  },
+              ] as const).map(({ label, icon, fn }) => (
+                <button key={label} onClick={fn} style={{
+                  background: theme.blockBody, border: `1px solid ${theme.border}`,
+                  color: theme.textPrimary, borderRadius: 4, padding: '7px 4px',
+                  cursor: 'pointer', fontSize: 11,
+                  display: 'flex', alignItems: 'center', gap: 5, justifyContent: 'center',
+                }}>
+                  <span style={{ fontFamily: 'monospace', fontSize: 13 }}>{icon}</span>
+                  {label}
+                </button>
+              ))}
+            </div>
+          </Section>
+
+        </div>
+      </div>
+
+      {/* ── Canvas ── */}
+      <div style={{
+        flex: 1, minWidth: 0, background: theme.canvasBg,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        overflow: 'hidden', position: 'relative',
+      }}>
+        <div style={{
+          position: 'absolute', inset: 0, pointerEvents: 'none',
+          backgroundImage: `radial-gradient(circle, ${theme.gridDot} 1px, transparent 1px)`,
+          backgroundSize: '20px 20px',
+        }} />
+        <CardCanvas
+          design={design}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          onMove={onMove}
+          onResize={onResize}
+        />
+      </div>
+
+      {/* ── Element properties panel ── */}
+      <div style={{
+        width: PANEL_W, flexShrink: 0,
+        background: theme.paletteBg, borderLeft: `1px solid ${theme.border}`,
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+      }}>
+        <PanelHeader>Element Properties</PanelHeader>
+        <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
+          {!sel ? (
+            <div style={{ color: theme.textMuted, fontSize: 12, textAlign: 'center', marginTop: 40, lineHeight: 1.6 }}>
+              Select an element on<br />the card to edit it
+            </div>
+          ) : (
+            <ElProperties
+              el={sel}
+              onUpdate={onUpdate}
+              onDelete={onDelete}
+              onMoveZ={onMoveZ}
+            />
+          )}
+        </div>
+      </div>
+    </>
   );
 }
 
