@@ -1,6 +1,6 @@
 import React from 'react';
 import type { PlacedBlock } from '../types';
-import { getDefinition } from '../blockRegistry';
+import { tryGetDefinition } from '../blockRegistry';
 import { commandBlockPath, hatBlockPath, queryBlockPath, socketPath } from '../utils/blockShapes';
 import { getBlockWidth, getBlockHeight, getSocketPositions, PRIMITIVE_TYPES } from '../utils/blockLayout';
 import { useTheme } from '../ThemeContext';
@@ -20,7 +20,8 @@ interface Props {
 }
 
 function buildBlockPath(block: PlacedBlock, allBlocks: Map<string, PlacedBlock>): string {
-  const def = getDefinition(block.definitionId);
+  // def is guaranteed to exist here — callers check before invoking.
+  const def = tryGetDefinition(block.definitionId)!;
   const w   = getBlockWidth(def, block.paramSlots, allBlocks);
   const h   = getBlockHeight(def);
   if (def.blockType === 'start')   return hatBlockPath(w, h);
@@ -33,8 +34,40 @@ export function BlockRenderer({
   editingSocket, onSocketCommit, onSocketCancelEdit,
   isGhost, isDragging, embedded,
 }: Props) {
-  const theme   = useTheme();
-  const def     = getDefinition(block.definitionId);
+  const theme = useTheme();
+  const def   = tryGetDefinition(block.definitionId);
+
+  // ── Missing-definition placeholder ────────────────────────────────────────
+  // Shown when a block references a collection (or other definition) that has
+  // since been renamed or deleted.  Draggable so the user can remove it by
+  // dropping it onto the palette.
+  if (!def) {
+    const handlePointerDown = onPointerDown
+      ? (e: React.PointerEvent) => { e.stopPropagation(); onPointerDown(e, block.instanceId); }
+      : undefined;
+    const handleClick = onBlockClick
+      ? (e: React.MouseEvent)   => { e.stopPropagation(); onBlockClick(block.instanceId); }
+      : undefined;
+    // Strip the internal __coll__ prefix so the label reads like "wiyg6b7 (missing)"
+    const shortId = block.definitionId.replace(/^__coll__/, '').slice(0, 16);
+    return (
+      <g
+        transform={(isGhost || embedded) ? undefined : `translate(${block.x},${block.y})`}
+        opacity={isDragging ? 0.35 : 0.85}
+        onPointerDown={handlePointerDown}
+        onClick={handleClick}
+        style={{ cursor: 'grab' }}
+      >
+        <rect x={0} y={0} width={160} height={24} rx={3}
+          fill="rgba(160,40,40,0.18)" stroke="#c05050" strokeWidth={1.5} strokeDasharray="5,3" />
+        <text x={8} y={16} fill="#c05050" fontSize={10} fontFamily="sans-serif"
+          fontStyle="italic" style={{ userSelect: 'none', pointerEvents: 'none' }}>
+          ⚠ {shortId} (missing)
+        </text>
+      </g>
+    );
+  }
+
   const h       = getBlockHeight(def);
   const sockets = getSocketPositions(def, block.paramSlots, allBlocks);
   const opacity = isGhost ? 0.75 : isDragging ? 0.35 : 1;

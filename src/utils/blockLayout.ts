@@ -1,5 +1,5 @@
 import type { BlockDefinition, ParamType, ParamSlot, PlacedBlock } from '../types';
-import { getDefinition } from '../blockRegistry';
+import { tryGetDefinition } from '../blockRegistry';
 
 export const BLOCK_H = 36;
 export const HAT_H = 50;
@@ -50,7 +50,12 @@ function resolveSlotWidth(
 ): number {
   if (slot?.queryBlockId && allBlocks) {
     const emb = allBlocks.get(slot.queryBlockId);
-    if (emb) return getBlockWidth(getDefinition(emb.definitionId), emb.paramSlots, allBlocks);
+    if (emb) {
+      // Use tryGetDefinition so a stale canvas reference (e.g. a renamed/deleted
+      // collection block) returns the default socket size instead of crashing.
+      const embDef = tryGetDefinition(emb.definitionId);
+      if (embDef) return getBlockWidth(embDef, emb.paramSlots, allBlocks);
+    }
   }
   return getSocketSize(paramType).w;
 }

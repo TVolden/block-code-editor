@@ -19,8 +19,8 @@ export { default as CardPreview } from '../carddesigner/CardPreview';
 export type { CardDesign, CardMeta } from '../carddesigner/cardDesignTypes';
 export { defaultCardDesign } from '../carddesigner/cardDesignTypes';
 import {
-  loadBlockRegistry, loadPackage, unloadPackage, getLoadedPackages, getDefinition, tryGetDefinition,
-  loadInlinePackage,
+  loadBlockRegistry, loadPackage, unloadPackage, getLoadedPackages,
+  getDefinition, tryGetDefinition, loadInlinePackage,
 } from '../blockRegistry';
 import type { PackageInfo, LoadedPackage } from '../blockRegistry';
 import { getBlockWidth, getBlockHeight, getSocketPositions, QUERY_H } from '../utils/blockLayout';
@@ -70,10 +70,10 @@ interface Props {
 }
 
 /** Where a block chain can snap onto another block's bottom connector. */
-type SnapResult = { blockId: string; sx: number; sy: number; dist: number };
+type SnapResult = { blockId: string; snapX: number; snapY: number; dist: number };
 
 /** Where a query block can snap into a parameter socket. */
-type SockResult = { blockId: string; slotIndex: number; sx: number; sy: number; dist: number };
+type SockResult = { blockId: string; slotIndex: number; snapX: number; snapY: number; dist: number };
 
 /**
  * All state needed for an in-progress drag.
@@ -100,10 +100,10 @@ function makeId() { return `b${nextBlockId++}`; }
 // ── Helper functions ─────────────────────────────────────────────────────────
 
 /**
- * Recursively collects IDs of all blocks to remove: the given IDs plus any
- * query blocks embedded in their param slots (and so on down the tree).
+ * Recursively collects IDs of a set of blocks and all query blocks embedded
+ * in their param slots (and so on down the tree). Pure — does not mutate.
  */
-function collectBlocksToDelete(ids: string[], blocks: Map<string, PlacedBlock>): string[] {
+function gatherWithDescendants(ids: string[], blocks: Map<string, PlacedBlock>): string[] {
   const result: string[] = [];
   const queue = [...ids];
   while (queue.length > 0) {
@@ -114,6 +114,49 @@ function collectBlocksToDelete(ids: string[], blocks: Map<string, PlacedBlock>):
     });
   }
   return result;
+}
+
+/**
+ * Returns a new canvas map with all orphaned blocks removed — blocks whose
+ * definition is no longer registered (e.g. a collection query block whose
+ * collection was renamed or deleted). Repairs command chains around removed blocks.
+ */
+function withOrphansRemoved(blocks: Map<string, PlacedBlock>): Map<string, PlacedBlock> {
+  const orphanIds: string[] = [];
+  blocks.forEach((block) => {
+    if (!tryGetDefinition(block.definitionId)) orphanIds.push(block.instanceId);
+  });
+  if (orphanIds.length === 0) return blocks;
+
+  const next = new Map(blocks);
+
+  for (const orphanId of orphanIds) {
+    const orphan = next.get(orphanId);
+    if (!orphan) continue;
+
+    // Stitch command chain past this block so downstream blocks aren't stranded.
+    if (orphan.parentBlockId || orphan.nextBlockId) {
+      const parent = orphan.parentBlockId ? next.get(orphan.parentBlockId) : null;
+      const child  = orphan.nextBlockId   ? next.get(orphan.nextBlockId)   : null;
+      if (parent) next.set(orphan.parentBlockId!, { ...parent, nextBlockId:   orphan.nextBlockId   ?? null });
+      if (child)  next.set(orphan.nextBlockId!,   { ...child,  parentBlockId: orphan.parentBlockId ?? null });
+    }
+
+    // Clear the socket in the parent block that was holding this query block.
+    if (orphan.embeddedInBlockId && orphan.embeddedSlotIndex >= 0) {
+      const parent = next.get(orphan.embeddedInBlockId);
+      if (parent) {
+        const slots = [...parent.paramSlots];
+        slots[orphan.embeddedSlotIndex] = { textValue: null, queryBlockId: null };
+        next.set(orphan.embeddedInBlockId, { ...parent, paramSlots: slots });
+      }
+    }
+  }
+
+  // Remove orphans and any query blocks they themselves embed.
+  const allToRemove = new Set(gatherWithDescendants(orphanIds, blocks));
+  allToRemove.forEach(id => next.delete(id));
+  return next;
 }
 
 /** Creates a fresh PlacedBlock with empty parameter slots. */
@@ -153,7 +196,8 @@ function findChainRoot(id: string, blocks: Map<string, PlacedBlock>): string {
  *   "block-id(param1, param2)"  — always parentheses, strings quoted, empty slots → _
  */
 function formatOutputLine(block: PlacedBlock, blocks: Map<string, PlacedBlock>): string {
-  const def  = getDefinition(block.definitionId);
+  const def  = tryGetDefinition(block.definitionId);
+  if (!def) return `[missing:${block.definitionId}]`;
   const args = block.paramSlots.map((slot, i) => {
     if (slot.queryBlockId) {
       const embedded = blocks.get(slot.queryBlockId);
@@ -166,6 +210,35 @@ function formatOutputLine(block: PlacedBlock, blocks: Map<string, PlacedBlock>):
     return '_';
   });
   return `${def.id}(${args.join(', ')})`;
+}
+
+/**
+ * Returns a new canvas map with the given carried block IDs (and all query
+ * blocks embedded in their slots) deleted. Pure — does not mutate the input.
+ */
+function deleteCarried(blocks: Map<string, PlacedBlock>, carriedIds: string[]): Map<string, PlacedBlock> {
+  const next = new Map(blocks);
+  gatherWithDescendants(carriedIds, blocks).forEach(id => next.delete(id));
+  return next;
+}
+
+/**
+ * Returns a new canvas map with the text value of a socket updated.
+ * Pure — does not mutate the input.
+ */
+function commitSocketText(
+  blocks: Map<string, PlacedBlock>,
+  blockId: string,
+  slotIndex: number,
+  value: string,
+): Map<string, PlacedBlock> {
+  const block = blocks.get(blockId);
+  if (!block) return blocks;
+  const slots = [...block.paramSlots];
+  slots[slotIndex] = { ...slots[slotIndex], textValue: value || null };
+  const next = new Map(blocks);
+  next.set(blockId, { ...block, paramSlots: slots });
+  return next;
 }
 
 // ── DragGhost ─────────────────────────────────────────────────────────────────
@@ -329,6 +402,9 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
     }
     setLoadedPackages(getLoadedPackages());
     setRegistryVersion(v => v + 1);
+    // Auto-correct: remove any canvas blocks whose definition is no longer in
+    // the registry (e.g. a collection block whose collection was renamed/deleted).
+    setBlocks(prev => withOrphansRemoved(prev));
   }, [additionalBlocks, ready]);
 
   // ── Package toggle ───────────────────────────────────────────────────────────
@@ -347,7 +423,7 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
             if (removedDefIds.has(block.definitionId)) rootsToRemove.push(block.instanceId);
           });
           // Collect embedded query blocks too
-          const allToRemove = new Set(collectBlocksToDelete(rootsToRemove, next));
+          const allToRemove = new Set(gatherWithDescendants(rootsToRemove, next));
           // Clean up dangling chain links on surviving blocks
           next.forEach(block => {
             if (allToRemove.has(block.instanceId)) return;
@@ -383,27 +459,28 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
     let best: SnapResult | null = null;
     blocks.forEach((block) => {
       if (exclude.has(block.instanceId) || block.embeddedInBlockId || block.nextBlockId) return;
-      const def = getDefinition(block.definitionId);
-      if (def.blockType === 'query') return;
+      const def = tryGetDefinition(block.definitionId);
+      if (!def || def.blockType === 'query') return;
       const blockBottom = block.y + getBlockHeight(def);
       const dx = Math.abs(svgX - block.x);
       const dy = Math.abs(svgY - blockBottom);
       if (dx < 40 && dy < SNAP_DISTANCE) {
         const dist = Math.hypot(dx, dy);
-        if (!best || dist < best.dist) best = { blockId: block.instanceId, sx: block.x, sy: blockBottom, dist };
+        if (!best || dist < best.dist) best = { blockId: block.instanceId, snapX: block.x, snapY: blockBottom, dist };
       }
     });
     return best;
   }, [blocks]);
 
   const findSocketSnap = useCallback((svgX: number, svgY: number, defId: string, exclude: Set<string>): SockResult | null => {
-    const draggedDef = getDefinition(defId);
-    if (draggedDef.blockType !== 'query') return null;
+    const draggedDef = tryGetDefinition(defId);
+    if (!draggedDef || draggedDef.blockType !== 'query') return null;
     const SNAP_DISTANCE = 20;
     let best: SockResult | null = null;
     blocks.forEach((block) => {
       if (exclude.has(block.instanceId)) return;
-      const blockDef = getDefinition(block.definitionId);
+      const blockDef = tryGetDefinition(block.definitionId);
+      if (!blockDef) return;
       const sockets  = getSocketPositions(blockDef, block.paramSlots, blocks);
       sockets.forEach((socket) => {
         if (socket.type !== draggedDef.returnType) return;
@@ -415,7 +492,7 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
         if (dx < socket.w / 2 + SNAP_DISTANCE && dy < socket.h / 2 + SNAP_DISTANCE) {
           const dist = Math.hypot(dx, dy);
           if (!best || dist < best.dist)
-            best = { blockId: block.instanceId, slotIndex: socket.index, sx: block.x + socket.x, sy: block.y + socket.y, dist };
+            best = { blockId: block.instanceId, slotIndex: socket.index, snapX: block.x + socket.x, snapY: block.y + socket.y, dist };
         }
       });
     });
@@ -444,15 +521,7 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
 
   const handleSocketCommit = useCallback((blockId: string, slotIndex: number, value: string) => {
     setEditingSocket(null);
-    setBlocks(prev => {
-      const next  = new Map(prev);
-      const b     = next.get(blockId);
-      if (!b) return prev;
-      const slots = [...b.paramSlots];
-      slots[slotIndex] = { ...slots[slotIndex], textValue: value || null };
-      next.set(blockId, { ...b, paramSlots: slots });
-      return next;
-    });
+    setBlocks(prev => commitSocketText(prev, blockId, slotIndex, value));
   }, []);
 
   const handleSocketCancelEdit = useCallback(() => setEditingSocket(null), []);
@@ -500,8 +569,10 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
     const offsetX = svgX - blockX;
     const offsetY = svgY - blockY;
 
-    const def   = getDefinition(block.definitionId);
-    const chain = def.blockType === 'query' ? [instanceId] : collectChain(instanceId, blocks);
+    const def   = tryGetDefinition(block.definitionId);
+    // Orphaned blocks (missing def) are treated as single-block drags so the
+    // user can drag them to the palette to delete them.
+    const chain = def?.blockType === 'query' ? [instanceId] : collectChain(instanceId, blocks);
 
     if (block.embeddedInBlockId || block.parentBlockId) {
       const embParentId   = block.embeddedInBlockId;
@@ -521,8 +592,8 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
         if (chainParentId) {
           const parent = next.get(chainParentId);
           if (parent) next.set(chainParentId, { ...parent, nextBlockId: null });
-          const bl = next.get(instanceId);
-          if (bl)  next.set(instanceId, { ...bl, parentBlockId: null });
+          const block = next.get(instanceId);
+          if (block) next.set(instanceId, { ...block, parentBlockId: null });
         }
         return next;
       });
@@ -575,12 +646,7 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
 
       // ── Delete: canvas block dropped over the palette ────────────────────────
       if (drag.type === 'canvas' && e.clientX < canvasRect.left) {
-        setBlocks(prev => {
-          const next     = new Map(prev);
-          const toDelete = collectBlocksToDelete(drag.carriedIds!, prev);
-          toDelete.forEach(id => next.delete(id));
-          return next;
-        });
+        setBlocks(prev => deleteCarried(prev, drag.carriedIds!));
         return;
       }
 
@@ -594,7 +660,7 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
 
         // Enforce one instance per event (start) block.
         if (def?.blockType === 'start') {
-          const alreadyPlaced = [...blocks.values()].some(b => b.definitionId === drag.defId);
+          const alreadyPlaced = [...blocks.values()].some(block => block.definitionId === drag.defId);
           if (alreadyPlaced) return;
         }
 
@@ -603,12 +669,12 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
         if (def.blockType !== 'query') {
           const snap = findSnapTarget(dropX, dropY, new Set());
           if (snap) {
-            const { blockId: snapId, sx: snapX, sy: snapY } = snap;
+            const { blockId: snapId, snapX, snapY } = snap;
             newBlock.x = snapX; newBlock.y = snapY; newBlock.parentBlockId = snapId;
             setBlocks(prev => {
               const next = new Map(prev);
-              const p = next.get(snapId)!;
-              next.set(snapId, { ...p, nextBlockId: newBlock.instanceId });
+              const parent = next.get(snapId)!;
+              next.set(snapId, { ...parent, nextBlockId: newBlock.instanceId });
               next.set(newBlock.instanceId, newBlock);
               return next;
             });
@@ -617,22 +683,22 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
         } else {
           const socketSnap = findSocketSnap(dropX, dropY, drag.defId, new Set());
           if (socketSnap) {
-            const { blockId: parentId, slotIndex, sx, sy } = socketSnap;
-            newBlock.x = sx; newBlock.y = sy;
+            const { blockId: parentId, slotIndex, snapX, snapY } = socketSnap;
+            newBlock.x = snapX; newBlock.y = snapY;
             newBlock.embeddedInBlockId = parentId; newBlock.embeddedSlotIndex = slotIndex;
             setBlocks(prev => {
               const next = new Map(prev);
-              const p = next.get(parentId)!;
-              const slots = [...p.paramSlots];
+              const parent = next.get(parentId)!;
+              const slots = [...parent.paramSlots];
               slots[slotIndex] = { textValue: null, queryBlockId: newBlock.instanceId };
-              next.set(parentId, { ...p, paramSlots: slots });
+              next.set(parentId, { ...parent, paramSlots: slots });
               next.set(newBlock.instanceId, newBlock);
               return next;
             });
             return;
           }
         }
-        setBlocks(prev => { const n = new Map(prev); n.set(newBlock.instanceId, newBlock); return n; });
+        setBlocks(prev => { const next = new Map(prev); next.set(newBlock.instanceId, newBlock); return next; });
 
       } else {
         const leadId = drag.instanceId!;
@@ -644,30 +710,36 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
           const deltaX = dropX - lead.x;
           const deltaY = dropY - lead.y;
           // Move carried blocks AND all query blocks embedded in their sockets
-          const allToMove = collectBlocksToDelete(drag.carriedIds!, next);
-          allToMove.forEach(id => { const b = next.get(id); if (b) next.set(id, { ...b, x: b.x + deltaX, y: b.y + deltaY }); });
+          const allToMove = gatherWithDescendants(drag.carriedIds!, next);
+          allToMove.forEach(id => {
+            const block = next.get(id);
+            if (block) next.set(id, { ...block, x: block.x + deltaX, y: block.y + deltaY });
+          });
 
           if (def.blockType !== 'query') {
             const snap = findSnapTarget(dropX, dropY, new Set(drag.carriedIds!));
             if (snap) {
-              const { blockId: snapId, sx: snapX, sy: snapY } = snap;
+              const { blockId: snapId, snapX, snapY } = snap;
               const nudgeX = snapX - dropX;
               const nudgeY = snapY - dropY;
-              drag.carriedIds!.forEach(id => { const b = next.get(id); if (b) next.set(id, { ...b, x: b.x + nudgeX, y: b.y + nudgeY }); });
-              const p = next.get(snapId)!;
-              next.set(snapId, { ...p, nextBlockId: leadId });
+              drag.carriedIds!.forEach(id => {
+                const block = next.get(id);
+                if (block) next.set(id, { ...block, x: block.x + nudgeX, y: block.y + nudgeY });
+              });
+              const parent = next.get(snapId)!;
+              next.set(snapId, { ...parent, nextBlockId: leadId });
               next.set(leadId, { ...next.get(leadId)!, parentBlockId: snapId });
             }
           } else {
             const socketSnap = findSocketSnap(dropX, dropY, drag.defId, new Set([leadId]));
             if (socketSnap) {
-              const { blockId: parentId, slotIndex, sx, sy } = socketSnap;
-              const b = next.get(leadId)!;
-              next.set(leadId, { ...b, x: sx, y: sy, embeddedInBlockId: parentId, embeddedSlotIndex: slotIndex });
-              const p = next.get(parentId)!;
-              const slots = [...p.paramSlots];
+              const { blockId: parentId, slotIndex, snapX, snapY } = socketSnap;
+              const block = next.get(leadId)!;
+              next.set(leadId, { ...block, x: snapX, y: snapY, embeddedInBlockId: parentId, embeddedSlotIndex: slotIndex });
+              const parent = next.get(parentId)!;
+              const slots = [...parent.paramSlots];
               slots[slotIndex] = { textValue: null, queryBlockId: leadId };
-              next.set(parentId, { ...p, paramSlots: slots });
+              next.set(parentId, { ...parent, paramSlots: slots });
             }
           }
           return next;
