@@ -2,9 +2,17 @@ import type { BlockDefinition, ParamType, ParamSlot, PlacedBlock } from '../type
 import { tryGetDefinition } from '../blockRegistry';
 
 export const BLOCK_H = 36;
-export const HAT_H = 50;
+export const HAT_H   = 50;   // header area of hat blocks (label + param sockets)
 export const QUERY_H = 24;
 export const NOTCH_H = 4;
+
+/** Height of each scope-output pill rendered in the event block's variable panel. */
+export const OUTPUT_PILL_H = 20;
+/**
+ * Vertical space consumed by one output row: pill height + gap below it.
+ * The bottom-padding of the last row is baked into getBlockHeight, not here.
+ */
+export const OUTPUT_ROW_H  = 26;
 
 const LPAD = 12;
 const RPAD = 12;
@@ -60,6 +68,11 @@ function resolveSlotWidth(
   return getSocketSize(paramType).w;
 }
 
+/** Minimum pill width based on label text only (type is implicit in the query block itself). */
+export function getPillWidth(name: string): number {
+  return Math.max(72, name.length * 6 + 22);
+}
+
 /** Width of a block, accounting for embedded query blocks in param slots */
 export function getBlockWidth(
   def: BlockDefinition,
@@ -70,12 +83,23 @@ export function getBlockWidth(
   for (let i = 0; i < def.params.length; i++) {
     w += SOCKET_GAP + resolveSlotWidth(def.params[i].type, paramSlots?.[i], allBlocks);
   }
+  // Ensure start blocks are wide enough for their widest context-variable pill.
+  if (def.blockType === 'start' && def.provides) {
+    for (const p of def.provides) {
+      w = Math.max(w, LPAD + getPillWidth(p.name) + RPAD);
+    }
+  }
   const minW = def.blockType === 'start' ? 140 : 110;
   return Math.max(minW, w);
 }
 
 export function getBlockHeight(def: BlockDefinition): number {
-  if (def.blockType === 'start') return HAT_H;
+  if (def.blockType === 'start') {
+    const n = def.provides?.length ?? 0;
+    // Panel layout: 6px top-pad + n × (pill 20px + 6px gap) − last gap + 8px bottom-pad
+    // Simplifies to: n > 0 → 8 + n × OUTPUT_ROW_H extra pixels below HAT_H
+    return HAT_H + (n > 0 ? 8 + n * OUTPUT_ROW_H : 0);
+  }
   if (def.blockType === 'command') return BLOCK_H;
   return QUERY_H;
 }
@@ -86,7 +110,9 @@ export function getSocketPositions(
   paramSlots?: ParamSlot[],
   allBlocks?: Map<string, PlacedBlock>,
 ): SocketInfo[] {
-  const bh = getBlockHeight(def);
+  // For start blocks with an output panel, sockets live in the header area only.
+  // Use HAT_H as the vertical reference so sockets don't drift into the output panel.
+  const rowH = def.blockType === 'start' ? HAT_H : getBlockHeight(def);
   const sockets: SocketInfo[] = [];
   let cx = LPAD + labelText(def).length * CHAR_W;
   for (let i = 0; i < def.params.length; i++) {
@@ -94,7 +120,7 @@ export function getSocketPositions(
     const sw = resolveSlotWidth(param.type, paramSlots?.[i], allBlocks);
     const sh = getSocketSize(param.type).h;
     cx += SOCKET_GAP;
-    sockets.push({ x: cx, y: (bh - sh) / 2, w: sw, h: sh, type: param.type, index: i });
+    sockets.push({ x: cx, y: (rowH - sh) / 2, w: sw, h: sh, type: param.type, index: i });
     cx += sw;
   }
   return sockets;

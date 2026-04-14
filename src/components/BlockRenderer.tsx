@@ -2,7 +2,7 @@ import React from 'react';
 import type { PlacedBlock } from '../types';
 import { tryGetDefinition } from '../blockRegistry';
 import { commandBlockPath, hatBlockPath, queryBlockPath, socketPath } from '../utils/blockShapes';
-import { getBlockWidth, getBlockHeight, getSocketPositions, PRIMITIVE_TYPES } from '../utils/blockLayout';
+import { getBlockWidth, getBlockHeight, getSocketPositions, getPillWidth, PRIMITIVE_TYPES, HAT_H, OUTPUT_ROW_H } from '../utils/blockLayout';
 import { useTheme } from '../ThemeContext';
 
 interface Props {
@@ -14,9 +14,35 @@ interface Props {
   editingSocket?: { blockId: string; slotIndex: number } | null;
   onSocketCommit?: (blockId: string, slotIndex: number, value: string) => void;
   onSocketCancelEdit?: () => void;
+  /** Called when the user starts dragging an output pill from a start block. */
+  onOutputDrag?: (e: React.PointerEvent, defId: string) => void;
   isGhost?: boolean;
   isDragging?: boolean;
   embedded?: boolean;
+}
+
+/**
+ * Walks the embedding/chain hierarchy upward from `block` and checks whether
+ * the root is a start block whose `provides` list includes `defId`.
+ * Returns false if the block is floating or the root does not provide the scope.
+ */
+function isInProvidedScope(block: PlacedBlock, defId: string, allBlocks: Map<string, PlacedBlock>): boolean {
+  let current: PlacedBlock = block;
+  for (;;) {
+    if (current.embeddedInBlockId) {
+      const host = allBlocks.get(current.embeddedInBlockId);
+      if (!host) return false;
+      current = host;
+    } else if (current.parentBlockId) {
+      const parent = allBlocks.get(current.parentBlockId);
+      if (!parent) return false;
+      current = parent;
+    } else {
+      // Reached the chain root
+      const rootDef = tryGetDefinition(current.definitionId);
+      return rootDef?.provides?.some(p => p.id === defId) ?? false;
+    }
+  }
 }
 
 function buildBlockPath(block: PlacedBlock, allBlocks: Map<string, PlacedBlock>): string {
@@ -31,7 +57,7 @@ function buildBlockPath(block: PlacedBlock, allBlocks: Map<string, PlacedBlock>)
 
 export function BlockRenderer({
   block, allBlocks, onPointerDown, onBlockClick, onSocketClick,
-  editingSocket, onSocketCommit, onSocketCancelEdit,
+  editingSocket, onSocketCommit, onSocketCancelEdit, onOutputDrag,
   isGhost, isDragging, embedded,
 }: Props) {
   const theme = useTheme();
@@ -68,6 +94,7 @@ export function BlockRenderer({
     );
   }
 
+  const w       = getBlockWidth(def, block.paramSlots, allBlocks);
   const h       = getBlockHeight(def);
   const sockets = getSocketPositions(def, block.paramSlots, allBlocks);
   const opacity = isGhost ? 0.75 : isDragging ? 0.35 : 1;
@@ -84,6 +111,38 @@ export function BlockRenderer({
   const handleClick = onBlockClick
     ? (e: React.MouseEvent) => { e.stopPropagation(); onBlockClick(block.instanceId); }
     : undefined;
+
+  // ── Out-of-scope guard ───────────────────────────────────────────────────────
+  // $scope query blocks are only valid when the chain root is an event that
+  // explicitly provides them.  Outside that context they show a warning
+  // placeholder — draggable so the user can reposition or remove them.
+  if (def.category.startsWith('$') && !isGhost) {
+    if (!isInProvidedScope(block, def.id, allBlocks)) {
+      const qw   = getBlockWidth(def);
+      const qh   = QUERY_H;
+      const qPath = queryBlockPath(def.returnType ?? 'string', qw, qh);
+      return (
+        <g
+          transform={(isGhost || embedded) ? undefined : `translate(${block.x},${block.y})`}
+          opacity={isDragging ? 0.35 : 0.85}
+          onPointerDown={handlePointerDown}
+          onClick={handleClick}
+          style={{ cursor: 'grab' }}
+        >
+          <path d={qPath}
+            fill="rgba(180,100,0,0.15)" stroke="#c08820"
+            strokeWidth={1.5} strokeDasharray="5,3" />
+          <text
+            x={qw / 2} y={qh / 2 + 3.5} textAnchor="middle"
+            fill="#c08820" fontSize={9} fontFamily="sans-serif" fontStyle="italic"
+            style={{ userSelect: 'none', pointerEvents: 'none' }}
+          >
+            ⚠ {def.name}
+          </text>
+        </g>
+      );
+    }
+  }
 
   return (
     <g
@@ -107,9 +166,9 @@ export function BlockRenderer({
       <rect x={0} y={0} width={4} height={h + 20}
         fill={def.color} clipPath={`url(#${clipId})`} />
 
-      {/* Block label */}
+      {/* Block label — centred in the header area (HAT_H for start blocks, full h otherwise) */}
       <text
-        x={11} y={h / 2 + 4}
+        x={11} y={(def.blockType === 'start' ? HAT_H : h) / 2 + 4}
         fill={theme.blockText} fontSize={11} fontWeight="bold" fontFamily="sans-serif"
         style={{ userSelect: 'none', pointerEvents: 'none' }}
       >
@@ -120,6 +179,48 @@ export function BlockRenderer({
           </tspan>
         )}
       </text>
+
+      {/* Context-variable panel — queries this event guarantees will return valid data.
+          Rendered inside the extended hat block body, below a divider line.
+          Pills are draggable onto sockets like any query block from the palette. */}
+      {def.blockType === 'start' && def.provides && def.provides.length > 0 && (
+        <g>
+          {/* Divider between header and context panel */}
+          <line x1={8} y1={HAT_H} x2={w - 8} y2={HAT_H}
+            stroke="rgba(255,255,255,0.15)" strokeWidth={1} />
+          {def.provides.map((prov, i) => {
+            const provDef    = tryGetDefinition(prov.id);
+            const pillColor  = provDef?.color ?? def.color;
+            const pillW      = getPillWidth(prov.name);
+            const pillH      = 20;
+            const pillX      = 8;
+            const pillY      = HAT_H + 6 + i * OUTPUT_ROW_H;
+            const interactive = !isGhost && !embedded;
+            return (
+              <g
+                key={prov.id}
+                transform={`translate(${pillX}, ${pillY})`}
+                onPointerDown={interactive
+                  ? (e) => { e.stopPropagation(); onOutputDrag?.(e, prov.id); }
+                  : undefined}
+                style={{ cursor: interactive ? 'grab' : 'default' }}
+              >
+                <rect x={0} y={0} width={pillW} height={pillH} rx={10}
+                  fill={pillColor} opacity={0.82}
+                  stroke="rgba(255,255,255,0.25)" strokeWidth={1} />
+                <text
+                  x={pillW / 2} y={pillH / 2 + 3.5}
+                  textAnchor="middle"
+                  fill="white" fontSize={9.5} fontFamily="sans-serif" fontWeight="bold"
+                  style={{ userSelect: 'none', pointerEvents: 'none' }}
+                >
+                  {prov.name}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+      )}
 
       {/* Sockets */}
       {sockets.map((sock) => {
@@ -139,6 +240,7 @@ export function BlockRenderer({
                 editingSocket={editingSocket}
                 onSocketCommit={onSocketCommit}
                 onSocketCancelEdit={onSocketCancelEdit}
+                onOutputDrag={onOutputDrag}
                 embedded
               />
             </g>

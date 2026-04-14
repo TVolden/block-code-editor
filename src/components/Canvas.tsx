@@ -12,11 +12,12 @@ interface Props {
   editingSocket?: { blockId: string; slotIndex: number } | null;
   onSocketCommit?: (blockId: string, slotIndex: number, value: string) => void;
   onSocketCancelEdit?: () => void;
+  onOutputDrag: (e: React.PointerEvent, defId: string) => void;
 }
 
 const Canvas = forwardRef<SVGSVGElement, Props>(
   ({ blocks, draggingIds, onBlockPointerDown, onBlockClick, onSocketClick,
-     editingSocket, onSocketCommit, onSocketCancelEdit }, ref) => {
+     editingSocket, onSocketCommit, onSocketCancelEdit, onOutputDrag }, ref) => {
     const theme = useTheme();
     const rootBlocks = [...blocks.values()].filter(b => !b.embeddedInBlockId);
 
@@ -47,6 +48,7 @@ const Canvas = forwardRef<SVGSVGElement, Props>(
             editingSocket={editingSocket}
             onSocketCommit={onSocketCommit}
             onSocketCancelEdit={onSocketCancelEdit}
+            onOutputDrag={onOutputDrag}
           />
         ))}
       </svg>

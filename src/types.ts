@@ -7,12 +7,28 @@ export interface BlockParam {
   type: ParamType;
 }
 
+/**
+ * A guarantee that a particular query block (`id`) will return valid data
+ * when used inside a handler chained to this event block.  The block is not
+ * an output of the event — it is a context promise.
+ *
+ * Dragging the pill attached to the event block places the referenced query
+ * on the canvas.  If that query is used outside any providing event, the
+ * renderer marks it as out-of-scope (like a missing-collection block).
+ */
+export interface BlockProvide {
+  name: string;  // label shown on the pill (e.g. "drawing player")
+  id: string;    // definition ID of the $scope query block
+}
+
 export interface BlockDefinition {
   id: string;
   name: string;
   blockType: BlockType;
   returnType?: ParamType;
   params: BlockParam[];
+  /** Context queries this event guarantees are valid. Only meaningful on start blocks. */
+  provides?: BlockProvide[];
   category: string;
   color: string;
 }

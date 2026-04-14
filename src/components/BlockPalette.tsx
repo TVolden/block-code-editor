@@ -1,9 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import type { BlockDefinition } from '../types';
 import type { PackageInfo, LoadedPackage } from '../blockRegistry';
-import { getAllDefinitions, getCategories } from '../blockRegistry';
+import { getAllDefinitions, getCategories, tryGetDefinition } from '../blockRegistry';
 import { commandBlockPath, hatBlockPath, queryBlockPath, socketPath } from '../utils/blockShapes';
-import { getBlockWidth, getBlockHeight, getSocketPositions, QUERY_H, PRIMITIVE_TYPES } from '../utils/blockLayout';
+import { getBlockWidth, getBlockHeight, getSocketPositions, getPillWidth, QUERY_H, PRIMITIVE_TYPES, HAT_H, OUTPUT_ROW_H } from '../utils/blockLayout';
 import { useTheme } from '../ThemeContext';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ function PaletteBlock({ def, onPointerDown, isPlaced }: {
           <path d={path} fill={theme.blockBody} stroke={theme.blockBorder} strokeWidth={1.5} />
           <rect x={0} y={0} width={4} height={h + 20}
             fill={def.color} clipPath={`url(#${clipId})`} />
-          <text x={11} y={h / 2 + 4} fill={theme.blockText} fontSize={11} fontWeight="bold" fontFamily="sans-serif"
+          <text x={11} y={(def.blockType === 'start' ? HAT_H : h) / 2 + 4} fill={theme.blockText} fontSize={11} fontWeight="bold" fontFamily="sans-serif"
             style={{ userSelect: 'none', pointerEvents: 'none' }}>
             {def.name}
             {def.blockType === 'query' && def.returnType && (
@@ -98,6 +98,32 @@ function PaletteBlock({ def, onPointerDown, isPlaced }: {
               </g>
             );
           })}
+          {/* Context-variable panel — visual preview, non-interactive in palette */}
+          {def.blockType === 'start' && def.provides && def.provides.length > 0 && (
+            <g>
+              <line x1={8} y1={HAT_H} x2={w - 8} y2={HAT_H}
+                stroke="rgba(255,255,255,0.15)" strokeWidth={1} />
+              {def.provides.map((prov, i) => {
+                const provDef   = tryGetDefinition(prov.id);
+                const pillColor = provDef?.color ?? def.color;
+                const pillW     = getPillWidth(prov.name);
+                const pillH     = 20;
+                return (
+                  <g key={prov.id} transform={`translate(8, ${HAT_H + 6 + i * OUTPUT_ROW_H})`}>
+                    <rect x={0} y={0} width={pillW} height={pillH} rx={10}
+                      fill={pillColor} opacity={0.82}
+                      stroke="rgba(255,255,255,0.25)" strokeWidth={1} />
+                    <text
+                      x={pillW / 2} y={pillH / 2 + 3.5} textAnchor="middle"
+                      fill="white" fontSize={9.5} fontFamily="sans-serif" fontWeight="bold"
+                      style={{ userSelect: 'none', pointerEvents: 'none' }}>
+                      {prov.name}
+                    </text>
+                  </g>
+                );
+              })}
+            </g>
+          )}
         </g>
       </svg>
     </div>
@@ -229,8 +255,10 @@ export default function BlockPalette({
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [togglingPackageId, setTogglingPackageId]   = useState<string | null>(null);
 
-  const allDefs    = useMemo(() => getAllDefinitions(), [registryVersion]);
-  const categories = useMemo(() => getCategories(),    [registryVersion]);
+  // Categories prefixed with "$" are scope-bound variable definitions only
+  // reachable by dragging from an event block's output pill, not from the palette.
+  const allDefs    = useMemo(() => getAllDefinitions().filter(d => !d.category.startsWith('$')), [registryVersion]);
+  const categories = useMemo(() => getCategories().filter(c => !c.startsWith('$')),             [registryVersion]);
 
   const query = searchQuery.trim().toLowerCase();
   const filteredDefs = query ? allDefs.filter(d => d.name.toLowerCase().includes(query)) : null;

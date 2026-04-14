@@ -842,6 +842,7 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
           editingSocket={editingSocket}
           onSocketCommit={handleSocketCommit}
           onSocketCancelEdit={handleSocketCancelEdit}
+          onOutputDrag={handlePalettePointerDown}
         />
       </div>
       <DragGhost ghostPos={ghostPos} dragRef={dragRef} blocks={blocks} />
