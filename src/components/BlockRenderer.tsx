@@ -2,7 +2,7 @@ import React from 'react';
 import type { PlacedBlock } from '../types';
 import { tryGetDefinition } from '../blockRegistry';
 import { commandBlockPath, hatBlockPath, queryBlockPath, socketPath } from '../utils/blockShapes';
-import { getBlockWidth, getBlockHeight, getSocketPositions, getPillWidth, PRIMITIVE_TYPES, HAT_H, OUTPUT_ROW_H } from '../utils/blockLayout';
+import { getBlockWidth, getBlockHeight, getSocketPositions, getPillWidth, PRIMITIVE_TYPES, HAT_H, OUTPUT_ROW_H, QUERY_H } from '../utils/blockLayout';
 import { useTheme } from '../ThemeContext';
 
 interface Props {
