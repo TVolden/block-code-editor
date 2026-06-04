@@ -5,3 +5,7 @@ export { default as CardDesigner } from './carddesigner/CardDesigner';
 export { default as CardPreview } from './carddesigner/CardPreview';
 export type { CardDesign, CardMeta } from './carddesigner/cardDesignTypes';
 export { defaultCardDesign } from './carddesigner/cardDesignTypes';
+export { ThemeContext, useTheme } from './ThemeContext';
+export { darkTheme, THEMES } from './theme';
+export type { Theme, ThemeId } from './theme';
+export { default as ThemeSwitcher } from './components/ThemeSwitcher';
