@@ -1,6 +1,6 @@
 {
   "name": "@tvolden/block-code-editor",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "main": "./dist/block-editor.cjs",
   "module": "./dist/block-editor.js",
