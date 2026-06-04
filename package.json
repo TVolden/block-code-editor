@@ -1,5 +1,5 @@
 {
-  "name": "@block-code/editor",
+  "name": "@tvolden/block-code-editor",
   "version": "0.1.0",
   "type": "module",
   "main": "./dist/block-editor.cjs",
