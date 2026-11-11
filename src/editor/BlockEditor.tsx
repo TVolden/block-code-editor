@@ -12,7 +12,10 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import type { BlockDefinition, ParamType, PlacedBlock, ParamSlot, SerializedCanvas } from '../types';
+import type {
+  BlockDefinition, ParamType, PlacedBlock, ParamSlot, SerializedCanvas, PackageRef, CatalogPackage, PackageAction,
+} from '../types';
+import { DEPENDENCY_PREFIX, dependencyPackageId, packageKey } from '../utils/packages';
 export type { SerializedCanvas, BlockDefinition } from '../types';
 export { default as CardDesigner } from '../carddesigner/CardDesigner';
 export { default as CardPreview } from '../carddesigner/CardPreview';
@@ -20,9 +23,9 @@ export type { CardDesign, CardMeta } from '../carddesigner/cardDesignTypes';
 export { defaultCardDesign } from '../carddesigner/cardDesignTypes';
 import {
   loadBlockRegistry, loadPackage, unloadPackage, getLoadedPackages,
-  getDefinition, tryGetDefinition, loadInlinePackage,
+  getDefinition, tryGetDefinition, loadInlinePackage, getBlockPackageId,
 } from '../blockRegistry';
-import type { PackageInfo, LoadedPackage } from '../blockRegistry';
+import type { LoadedPackage } from '../blockRegistry';
 import {
   getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions,
   computeLayout, isCommandParam,
@@ -71,6 +74,19 @@ interface Props {
    * prop unregisters the previous set and registers the new one.
    */
   additionalBlocks?: import('../types').BlockDefinition[];
+  /**
+   * The packages the canvas depends on, maintained in the palette's Packages tab (which shows only with this prop).
+   * Controlled: a change is reported with `onDependenciesChange`, and the editor loads what it is given back. Their
+   * blocks are fetched from `packageBlocksUrl`, after the `blocksUrl(s)`, which stay the core set.
+   */
+  dependencies?: PackageRef[];
+  onDependenciesChange?: (dependencies: PackageRef[]) => void;
+  /** Where a package version's blocks (`BlockDefinition[]`) are fetched. Required with `dependencies`. */
+  packageBlocksUrl?: (ref: PackageRef) => string;
+  /** The packages the Packages tab offers to add, each at the version adding it pins. */
+  availablePackages?: CatalogPackage[];
+  /** Extra buttons in the Packages tab. */
+  packageActions?: PackageAction[];
 }
 
 /** Where a query block can snap into a parameter socket. */
@@ -246,6 +262,41 @@ function attachChain(blocks: Map<string, PlacedBlock>, leadId: string, tailId: s
   }
 }
 
+/**
+ * Brings the registry's dependencies in line with `deps`: unloads the loaded ones no longer wanted (a package whose
+ * version changed included) and loads the missing ones from `blocksUrlOf`. Returns whether anything changed. Does
+ * nothing without dependencies (an editor that doesn't maintain packages).
+ */
+async function syncDependencies(
+  deps: PackageRef[] | undefined,
+  blocksUrlOf: ((ref: PackageRef) => string) | undefined,
+): Promise<boolean> {
+  if (!deps || !blocksUrlOf) return false;
+  const wanted   = new Map(deps.map(d => [dependencyPackageId(d), d]));
+  const loaded   = new Set(getLoadedPackages().map(lp => lp.info.id).filter(id => id.startsWith(DEPENDENCY_PREFIX)));
+  const toUnload = [...loaded].filter(id => !wanted.has(id));
+  const toLoad   = [...wanted].filter(([id]) => !loaded.has(id));
+  // Unload first: another version of a package defines the same block ids, and the first registered wins.
+  toUnload.forEach(unloadPackage);
+  for (const [id, ref] of toLoad) {
+    await loadPackage({ id, name: packageKey(ref), description: '', url: blocksUrlOf(ref), builtIn: false });
+  }
+  return toUnload.length > 0 || toLoad.length > 0;
+}
+
+/** How many canvas blocks each loaded dependency provides, by `packageKey` (the name it is loaded under). */
+function countBlocksByPackage(blocks: Map<string, PlacedBlock>): Map<string, number> {
+  const names = new Map(getLoadedPackages().map(lp => [lp.info.id, lp.info.name]));
+  const counts = new Map<string, number>();
+  blocks.forEach(block => {
+    const packageId = getBlockPackageId(block.definitionId);
+    if (!packageId?.startsWith(DEPENDENCY_PREFIX)) return;
+    const key = names.get(packageId)!;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  });
+  return counts;
+}
+
 /** Creates a fresh PlacedBlock with empty parameter slots. */
 function createBlock(defId: string, x: number, y: number): PlacedBlock {
   const def = getDefinition(defId);
@@ -399,7 +450,11 @@ function fitsSocket(query: BlockDefinition, socketType: ParamType): boolean {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, onRun, onThemeChange, navTabs, initialState, onSave, themeId, hideTitleBar, getStateRef, additionalBlocks }: Props) {
+export default function BlockEditor({
+  blocksUrl = '/blocks.json', blocksUrls, onRun, onThemeChange, navTabs, initialState, onSave, themeId, hideTitleBar,
+  getStateRef, additionalBlocks,
+  dependencies, onDependenciesChange, packageBlocksUrl, availablePackages, packageActions,
+}: Props) {
   const [theme, setTheme] = useState<Theme>(() => {
     if (themeId) return THEMES.find(t => t.id === themeId) ?? darkTheme;
     const saved = localStorage.getItem('cardcq-theme');
@@ -441,7 +496,6 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
   const [isOverPalette, setIsOverPalette] = useState(false);
 
   const [registryVersion, setRegistryVersion]     = useState(0);
-  const [availablePackages, setAvailablePackages] = useState<PackageInfo[]>([]);
   const [loadedPackages, setLoadedPackages]       = useState<LoadedPackage[]>([]);
 
   // Where every block is drawn (non-root blocks are placed by the block they hang off). It depends on the definitions
@@ -463,14 +517,33 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
   const resolvedUrls = blocksUrls ?? [blocksUrl];
   const resolvedUrlsKey = resolvedUrls.join('|');
 
+  // The latest dependencies, for the loaders below (which run on the registry one after the other, see loadQueue).
+  const dependenciesRef     = useRef(dependencies);
+  const packageBlocksUrlRef = useRef(packageBlocksUrl);
   useEffect(() => {
+    dependenciesRef.current     = dependencies;
+    packageBlocksUrlRef.current = packageBlocksUrl;
+  });
+  const dependenciesKey = (dependencies ?? []).map(dependencyPackageId).join('|');
+
+  // Loads change the module-level registry, so they run one after another.
+  const loadQueue = useRef<Promise<void>>(Promise.resolve());
+
+  // The core set, then the dependencies; the editor is ready (and cleans up orphans) only once all are in.
+  // A run whose effect was cleaned up (StrictMode's double run in development, or new URLs) does nothing more: a later
+  // run clears and reloads the registry, and must not find a stale run marking the editor ready (which removes every
+  // block without a definition) while it is still loading.
+  useEffect(() => {
+    let cancelled = false;
     const urls = resolvedUrlsKey.split('|');
     setReady(false);
     setLoadError(null);
-    // First URL clears registry and loads as core; subsequent URLs append as named packages.
-    loadBlockRegistry(urls[0])
-      .then(async () => {
-        for (let i = 1; i < urls.length; i++) {
+    loadQueue.current = loadQueue.current.then(async () => {
+      if (cancelled) return;
+      try {
+        // First URL clears registry and loads as core; subsequent URLs append as named packages.
+        await loadBlockRegistry(urls[0]);
+        for (let i = 1; i < urls.length && !cancelled; i++) {
           await loadPackage({
             id: `__extra_${i}__`,
             name: `Extra ${i}`,
@@ -479,18 +552,39 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
             builtIn: true,
           });
         }
-        setReady(true);
+        if (cancelled) return;
+        await syncDependencies(dependenciesRef.current, packageBlocksUrlRef.current);
+        if (cancelled) return;
         setLoadedPackages(getLoadedPackages());
-      })
-      .catch(err => setLoadError(String(err)));
+        setRegistryVersion(v => v + 1);
+        setReady(true);
+      } catch (err) {
+        if (!cancelled) setLoadError(String(err));
+      }
+    });
+    return () => { cancelled = true; };
   }, [resolvedUrlsKey]);
 
+  // A change of dependencies once ready: load and unload only what changed, then remove the blocks whose definitions
+  // went (after the loads, so a version update keeps the blocks its new version still has). A run whose effect was
+  // cleaned up before its turn is skipped: the next run syncs to the latest dependencies anyway.
   useEffect(() => {
-    fetch('/packages.json')
-      .then(r => r.json())
-      .then(setAvailablePackages)
-      .catch(() => { /* packages.json is optional */ });
-  }, []);
+    if (!ready) return;
+    let cancelled = false;
+    loadQueue.current = loadQueue.current.then(async () => {
+      if (cancelled) return;
+      try {
+        const changed = await syncDependencies(dependenciesRef.current, packageBlocksUrlRef.current);
+        if (!changed) return;
+        setLoadedPackages(getLoadedPackages());
+        setRegistryVersion(v => v + 1);
+        setBlocks(prev => withOrphansRemoved(prev));
+      } catch (err) {
+        setLoadError(String(err));
+      }
+    });
+    return () => { cancelled = true; };
+  }, [ready, dependenciesKey]);
 
   // ── Inline (additional) blocks ───────────────────────────────────────────────
 
@@ -509,21 +603,6 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
     // the registry (e.g. a collection block whose collection was renamed/deleted).
     setBlocks(prev => withOrphansRemoved(prev));
   }, [additionalBlocks, ready]);
-
-  // ── Package toggle ───────────────────────────────────────────────────────────
-
-  const handlePackageToggle = useCallback(async (pkg: PackageInfo, currentlyLoaded: boolean) => {
-    if (currentlyLoaded) {
-      // Remove canvas blocks whose definition belongs to this package before unloading
-      // Its blocks lose their definitions: remove them (and what they hold), repairing the chains around them.
-      unloadPackage(pkg.id);
-      setBlocks(prev => withOrphansRemoved(prev));
-    } else {
-      await loadPackage(pkg);
-    }
-    setLoadedPackages(getLoadedPackages());
-    setRegistryVersion(v => v + 1);
-  }, []);
 
   // ── Coordinate helpers ───────────────────────────────────────────────────────
 
@@ -878,9 +957,16 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
           onPointerDown={handlePalettePointerDown}
           isDropTarget={isOverPalette}
           registryVersion={registryVersion}
-          availablePackages={availablePackages}
-          loadedPackages={loadedPackages}
-          onPackageToggle={handlePackageToggle}
+          packages={dependencies && onDependenciesChange ? {
+            available:      availablePackages ?? [],
+            dependencies,
+            onChange:       onDependenciesChange,
+            actions:        packageActions,
+            blockCounts:    countBlocksByPackage(blocks),
+            conflictCounts: new Map(loadedPackages
+              .filter(lp => lp.info.id.startsWith(DEPENDENCY_PREFIX))
+              .map(lp => [lp.info.name, lp.conflictIds.length])),
+          } : undefined}
           placedStartIds={placedStartIds}
         />
         <Canvas

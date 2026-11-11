@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import type { BlockDefinition } from '../types';
-import type { PackageInfo, LoadedPackage } from '../blockRegistry';
 import { getAllDefinitions, getCategories, tryGetDefinition } from '../blockRegistry';
+import PackagesTab from './PackagesTab';
+import type { PackagesTabProps } from './PackagesTab';
 import { blockPath, socketPath } from '../utils/blockShapes';
 import {
   getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillWidth,
@@ -17,9 +18,8 @@ interface Props {
   onPointerDown: (e: React.PointerEvent, definitionId: string) => void;
   isDropTarget?: boolean;
   registryVersion: number;
-  availablePackages: PackageInfo[];
-  loadedPackages: LoadedPackage[];
-  onPackageToggle: (pkg: PackageInfo, currentlyLoaded: boolean) => Promise<void>;
+  /** The Packages tab's contents; without it the palette has no Packages tab. */
+  packages?: PackagesTabProps;
   /** Definition IDs of start (event) blocks already placed on the canvas. */
   placedStartIds: Set<string>;
 }
@@ -172,80 +172,19 @@ function CategorySection({ cat, defs, collapsed, onToggle, onPointerDown, placed
   );
 }
 
-// ── PackageRow ────────────────────────────────────────────────────────────────
-
-function PackageRow({ pkg, loaded, toggling, onToggle }: {
-  pkg: PackageInfo;
-  loaded: LoadedPackage | undefined;
-  toggling: boolean;
-  onToggle: (pkg: PackageInfo, currentlyLoaded: boolean) => void;
-}) {
-  const theme = useTheme();
-  const isLoaded = !!loaded;
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-      gap: 8, padding: '10px 12px', marginBottom: 6,
-      background: isLoaded ? theme.pkgActiveBg : theme.pkgBg,
-      border: `1px solid ${isLoaded ? theme.pkgActiveBorder : theme.pkgBorder}`,
-      borderRadius: 5,
-    }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-          <span style={{ color: isLoaded ? theme.pkgActiveText : theme.pkgText, fontSize: 11, fontWeight: 'bold', letterSpacing: 0.3 }}>
-            {pkg.name}
-          </span>
-          {loaded && loaded.conflictIds.length > 0 && (
-            <span title={`${loaded.conflictIds.length} block ID(s) skipped due to conflicts`}
-              style={{ fontSize: 9, color: theme.accent, border: `1px solid ${theme.accent}`, borderRadius: 3, padding: '1px 4px', opacity: 0.7 }}>
-              ⚠ {loaded.conflictIds.length}
-            </span>
-          )}
-        </div>
-        <div style={{ color: theme.pkgSubText, fontSize: 10 }}>
-          {isLoaded
-            ? `${loaded!.blockIds.length} block${loaded!.blockIds.length !== 1 ? 's' : ''} active`
-            : pkg.description}
-        </div>
-      </div>
-      <button
-        disabled={toggling}
-        onClick={() => onToggle(pkg, isLoaded)}
-        title={isLoaded ? `Remove ${pkg.name}` : `Add ${pkg.name}`}
-        style={{
-          flexShrink: 0, marginTop: 1,
-          width: 22, height: 22,
-          background: 'none',
-          border: `1px solid ${isLoaded ? '#804040' : '#407040'}`,
-          borderRadius: 4,
-          color: isLoaded ? '#c05050' : '#508050',
-          fontSize: 16, lineHeight: 1,
-          cursor: toggling ? 'wait' : 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          padding: 0, opacity: toggling ? 0.4 : 1,
-          transition: 'opacity 0.1s',
-        }}
-      >
-        {toggling ? '…' : isLoaded ? '×' : '+'}
-      </button>
-    </div>
-  );
-}
-
 // ── BlockPalette ──────────────────────────────────────────────────────────────
 
 type Tab = 'blocks' | 'packages';
 
 export default function BlockPalette({
   onPointerDown, isDropTarget,
-  registryVersion, availablePackages, loadedPackages, onPackageToggle,
+  registryVersion, packages,
   placedStartIds,
 }: Props) {
   const theme = useTheme();
   const [tab, setTab]                               = useState<Tab>('blocks');
   const [searchQuery, setSearchQuery]               = useState('');
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
-  const [togglingPackageId, setTogglingPackageId]   = useState<string | null>(null);
 
   // Categories prefixed with "$" are scope-bound variable definitions only
   // reachable by dragging from an event block's output pill, not from the palette.
@@ -263,14 +202,7 @@ export default function BlockPalette({
     });
   }
 
-  async function handleToggle(pkg: PackageInfo, currentlyLoaded: boolean) {
-    setTogglingPackageId(pkg.id);
-    try { await onPackageToggle(pkg, currentlyLoaded); }
-    finally { setTogglingPackageId(null); }
-  }
-
-  const loadedPkgMap = new Map(loadedPackages.map(lp => [lp.info.id, lp]));
-  const loadedCount  = loadedPackages.filter(lp => lp.info.id !== '__core__').length;
+  const chosenCount = packages?.dependencies.length ?? 0;
 
   const tabStyle = (t: Tab): React.CSSProperties => ({
     flex: 1, background: 'none', border: 'none',
@@ -290,13 +222,15 @@ export default function BlockPalette({
       height: '100%', overflow: 'hidden',
     }}>
 
-      {/* ── Tab bar ── */}
-      <div style={{ display: 'flex', borderBottom: `1px solid ${theme.border}`, flexShrink: 0, background: theme.paletteHeaderBg }}>
-        <button style={tabStyle('blocks')} onClick={() => setTab('blocks')}>Blocks</button>
-        <button style={tabStyle('packages')} onClick={() => setTab('packages')}>
-          Packages{loadedCount > 0 ? ` · ${loadedCount}` : ''}
-        </button>
-      </div>
+      {/* ── Tab bar (only with a Packages tab) ── */}
+      {packages && (
+        <div style={{ display: 'flex', borderBottom: `1px solid ${theme.border}`, flexShrink: 0, background: theme.paletteHeaderBg }}>
+          <button style={tabStyle('blocks')} onClick={() => setTab('blocks')}>Blocks</button>
+          <button style={tabStyle('packages')} onClick={() => setTab('packages')}>
+            Packages{chosenCount > 0 ? ` · ${chosenCount}` : ''}
+          </button>
+        </div>
+      )}
 
       {/* ── Blocks tab ── */}
       {tab === 'blocks' && <>
@@ -357,20 +291,7 @@ export default function BlockPalette({
       </>}
 
       {/* ── Packages tab ── */}
-      {tab === 'packages' && (
-        <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
-          {availablePackages.length === 0
-            ? <div style={{ color: theme.textMuted, fontSize: 11, textAlign: 'center', padding: '20px 0' }}>No packages available</div>
-            : availablePackages.map(pkg => (
-                <PackageRow
-                  key={pkg.id} pkg={pkg}
-                  loaded={loadedPkgMap.get(pkg.id)}
-                  toggling={togglingPackageId === pkg.id}
-                  onToggle={handleToggle}
-                />
-              ))}
-        </div>
-      )}
+      {tab === 'packages' && packages && <PackagesTab {...packages} />}
     </div>
   );
 }

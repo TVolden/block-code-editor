@@ -5,6 +5,8 @@ import CardDesigner from './carddesigner/CardDesigner';
 import { ThemeContext } from './ThemeContext';
 import { darkTheme, THEMES } from './theme';
 import type { Theme } from './theme';
+import type { PackageRef } from './types';
+import { DEMO_PACKAGES, demoPackageBlocksUrl } from './demoPackages';
 import './App.css';
 
 type Page = 'block-editor' | 'card-designer';
@@ -17,6 +19,7 @@ const PAGES: { id: Page; label: string }[] = [
 export default function App() {
   const [consoleLines, setConsoleLines] = useState<string[]>([]);
   const [page, setPage] = useState<Page>('block-editor');
+  const [dependencies, setDependencies] = useState<PackageRef[]>([]);
 
   const [theme, setTheme] = useState<Theme>(() => {
     const saved = localStorage.getItem('cardcq-theme');
@@ -60,6 +63,10 @@ export default function App() {
           <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
             <BlockEditor
               blocksUrl="/blocks.json"
+              dependencies={dependencies}
+              onDependenciesChange={setDependencies}
+              packageBlocksUrl={demoPackageBlocksUrl}
+              availablePackages={DEMO_PACKAGES}
               onRun={handleRun}
               onThemeChange={handleThemeChange}
               navTabs={navTabs}

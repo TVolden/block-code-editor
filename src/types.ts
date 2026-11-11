@@ -64,6 +64,27 @@ export interface PlacedBlock {
   paramSlots: ParamSlot[];
 }
 
+/** One version of a block package that a canvas depends on. */
+export interface PackageRef {
+  publisher: string;
+  name: string;
+  version: string;
+}
+
+/** A package that may be added in the Packages tab, at the version adding it pins (normally the newest listed). */
+export interface CatalogPackage extends PackageRef {
+  description?: string;
+  /** Shown as a swatch next to the package. */
+  color?: string;
+}
+
+/** An extra button in the Packages tab, e.g. "Import game packages". */
+export interface PackageAction {
+  label: string;
+  title?: string;
+  onClick: () => void;
+}
+
 /**
  * Serialized form of the block canvas — safe to JSON.stringify/parse and
  * store externally (e.g. on a server). Pass back as `initialState` to restore.
