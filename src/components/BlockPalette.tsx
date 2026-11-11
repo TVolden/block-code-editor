@@ -2,9 +2,14 @@ import React, { useState, useMemo } from 'react';
 import type { BlockDefinition } from '../types';
 import type { PackageInfo, LoadedPackage } from '../blockRegistry';
 import { getAllDefinitions, getCategories, tryGetDefinition } from '../blockRegistry';
-import { commandBlockPath, hatBlockPath, queryBlockPath, socketPath } from '../utils/blockShapes';
-import { getBlockWidth, getBlockHeight, getSocketPositions, getPillWidth, QUERY_H, PRIMITIVE_TYPES, HAT_H, OUTPUT_ROW_H } from '../utils/blockLayout';
+import { blockPath, socketPath } from '../utils/blockShapes';
+import {
+  getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillWidth,
+  socketTitle, HAT_H, OUTPUT_ROW_H,
+} from '../utils/blockLayout';
 import { useTheme } from '../ThemeContext';
+import { MouthDecorations } from './MouthDecorations';
+import { SocketHint } from './SocketHint';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -32,13 +37,11 @@ function PaletteBlock({ def, onPointerDown, isPlaced }: {
   const w     = getBlockWidth(def);
   const h     = getBlockHeight(def);
   const sockets = getSocketPositions(def);
+  const mouths  = getMouthPositions(def);
 
   const clipId     = `pal-${def.id}`;
 
-  let path: string;
-  if (def.blockType === 'start')        path = hatBlockPath(w, h);
-  else if (def.blockType === 'command') path = commandBlockPath(w, h);
-  else                                  path = queryBlockPath(def.returnType!, w, QUERY_H);
+  const path = blockPath(def);
 
   return (
     <div
@@ -56,7 +59,8 @@ function PaletteBlock({ def, onPointerDown, isPlaced }: {
           <path d={path} fill={theme.blockBody} stroke={theme.blockBorder} strokeWidth={1.5} />
           <rect x={0} y={0} width={4} height={h + 20}
             fill={def.color} clipPath={`url(#${clipId})`} />
-          <text x={11} y={(def.blockType === 'start' ? HAT_H : h) / 2 + 4} fill={theme.blockText} fontSize={11} fontWeight="bold" fontFamily="sans-serif"
+          {mouths.length > 0 && <MouthDecorations mouths={mouths} w={w} isEmpty={() => true} />}
+          <text x={11} y={getHeaderHeight(def) / 2 + 4} fill={theme.blockText} fontSize={11} fontWeight="bold" fontFamily="sans-serif"
             style={{ userSelect: 'none', pointerEvents: 'none' }}>
             {def.name}
             {def.blockType === 'query' && def.returnType && (
@@ -76,25 +80,13 @@ function PaletteBlock({ def, onPointerDown, isPlaced }: {
             </text>
           )}
           {sockets.map((sock) => {
-            const paramName = def.params[sock.index]?.name;
-            const isCustom  = !PRIMITIVE_TYPES.has(sock.type);
+            const paramName = def.params[sock.index].name;
             return (
               <g key={sock.index} transform={`translate(${sock.x},${sock.y})`}>
+                <title>{socketTitle(paramName, sock.type)}</title>
                 <path d={socketPath(sock.type, sock.w, sock.h)}
                   fill={theme.socketBody} stroke={theme.blockBorder} strokeWidth={1} />
-                {isCustom ? (
-                  <text x={sock.w / 2} y={sock.h / 2 + 3} textAnchor="middle"
-                    fill={theme.textSecondary} fontSize={9} fontFamily="sans-serif"
-                    style={{ userSelect: 'none', pointerEvents: 'none' }}>
-                    {sock.type}
-                  </text>
-                ) : paramName ? (
-                  <text x={sock.w / 2} y={sock.h / 2 + 3} textAnchor="middle"
-                    fill={theme.textMuted} fontSize={9} fontFamily="sans-serif" fontStyle="italic"
-                    style={{ userSelect: 'none', pointerEvents: 'none' }}>
-                    {paramName}
-                  </text>
-                ) : null}
+                <SocketHint name={paramName} type={sock.type} w={sock.w} h={sock.h} />
               </g>
             );
           })}

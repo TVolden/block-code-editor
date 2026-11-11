@@ -12,7 +12,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import type { PlacedBlock, ParamSlot, SerializedCanvas } from '../types';
+import type { BlockDefinition, ParamType, PlacedBlock, ParamSlot, SerializedCanvas } from '../types';
 export type { SerializedCanvas, BlockDefinition } from '../types';
 export { default as CardDesigner } from '../carddesigner/CardDesigner';
 export { default as CardPreview } from '../carddesigner/CardPreview';
@@ -23,12 +23,16 @@ import {
   getDefinition, tryGetDefinition, loadInlinePackage,
 } from '../blockRegistry';
 import type { PackageInfo, LoadedPackage } from '../blockRegistry';
-import { getBlockWidth, getBlockHeight, getSocketPositions, QUERY_H } from '../utils/blockLayout';
+import {
+  getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions,
+  computeLayout, isCommandParam,
+} from '../utils/blockLayout';
 import { darkTheme, THEMES } from '../theme';
 import type { Theme, ThemeId } from '../theme';
 import { ThemeContext, useTheme } from '../ThemeContext';
-import { commandBlockPath, hatBlockPath, queryBlockPath } from '../utils/blockShapes';
+import { blockPath } from '../utils/blockShapes';
 import BlockPalette from '../components/BlockPalette';
+import { MouthDecorations } from '../components/MouthDecorations';
 import Canvas from '../components/Canvas';
 import { BlockRenderer } from '../components/BlockRenderer';
 import ThemeSwitcher from '../components/ThemeSwitcher';
@@ -69,9 +73,6 @@ interface Props {
   additionalBlocks?: import('../types').BlockDefinition[];
 }
 
-/** Where a block chain can snap onto another block's bottom connector. */
-type SnapResult = { blockId: string; snapX: number; snapY: number; dist: number };
-
 /** Where a query block can snap into a parameter socket. */
 type SockResult = { blockId: string; slotIndex: number; snapX: number; snapY: number; dist: number };
 
@@ -85,6 +86,7 @@ interface DragState {
   defId: string;           // block definition being dragged
   instanceId?: string;     // canvas block being dragged (canvas drags only)
   carriedIds?: string[];   // this block + all chained blocks below it
+  detachAt?: { x: number; y: number };  // where the block is drawn; it becomes a root there once dragged
   offsetX: number;         // cursor offset from block's top-left corner
   offsetY: number;
   startClientX: number;    // initial pointer position (detect click vs drag)
@@ -100,26 +102,48 @@ function makeId() { return `b${nextBlockId++}`; }
 // ── Helper functions ─────────────────────────────────────────────────────────
 
 /**
- * Recursively collects IDs of a set of blocks and all query blocks embedded
- * in their param slots (and so on down the tree). Pure — does not mutate.
+ * Collects IDs of a set of blocks and everything they hold: the query blocks
+ * embedded in their param slots and the whole chains in their mouths (and so
+ * on down the tree). Pure — does not mutate.
  */
 function gatherWithDescendants(ids: string[], blocks: Map<string, PlacedBlock>): string[] {
   const result: string[] = [];
+  const seen = new Set<string>();
   const queue = [...ids];
   while (queue.length > 0) {
     const id = queue.shift()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
     result.push(id);
     blocks.get(id)?.paramSlots.forEach(slot => {
       if (slot.queryBlockId) queue.push(slot.queryBlockId);
+      if (slot.commandBlockId) queue.push(...collectChain(slot.commandBlockId, blocks));
     });
   }
   return result;
 }
 
+/** Whether the block is the first block of a mouth's chain (rather than a query in a socket). */
+function isMouthHead(block: PlacedBlock, blocks: Map<string, PlacedBlock>): boolean {
+  if (!block.embeddedInBlockId) return false;
+  const host = blocks.get(block.embeddedInBlockId);
+  return host?.paramSlots[block.embeddedSlotIndex]?.commandBlockId === block.instanceId;
+}
+
+/** Sets a slot of a block in the map. Mutates `blocks`, which must be a copy. */
+function setSlot(blocks: Map<string, PlacedBlock>, blockId: string, slotIndex: number, slot: ParamSlot) {
+  const block = blocks.get(blockId);
+  if (!block) return;
+  const slots = [...block.paramSlots];
+  slots[slotIndex] = slot;
+  blocks.set(blockId, { ...block, paramSlots: slots });
+}
+
 /**
  * Returns a new canvas map with all orphaned blocks removed — blocks whose
  * definition is no longer registered (e.g. a collection query block whose
- * collection was renamed or deleted). Repairs command chains around removed blocks.
+ * collection was renamed or deleted, or a block of a removed package).
+ * Repairs command chains around removed blocks, also in mouths.
  */
 function withOrphansRemoved(blocks: Map<string, PlacedBlock>): Map<string, PlacedBlock> {
   const orphanIds: string[] = [];
@@ -129,34 +153,97 @@ function withOrphansRemoved(blocks: Map<string, PlacedBlock>): Map<string, Place
   if (orphanIds.length === 0) return blocks;
 
   const next = new Map(blocks);
+  // Everything an orphan holds goes with it; nothing in there needs repairing.
+  const allToRemove = new Set(gatherWithDescendants(orphanIds, blocks));
 
   for (const orphanId of orphanIds) {
     const orphan = next.get(orphanId);
     if (!orphan) continue;
+    const child = orphan.nextBlockId ? next.get(orphan.nextBlockId) : undefined;
 
-    // Stitch command chain past this block so downstream blocks aren't stranded.
-    if (orphan.parentBlockId || orphan.nextBlockId) {
-      const parent = orphan.parentBlockId ? next.get(orphan.parentBlockId) : null;
-      const child  = orphan.nextBlockId   ? next.get(orphan.nextBlockId)   : null;
-      if (parent) next.set(orphan.parentBlockId!, { ...parent, nextBlockId:   orphan.nextBlockId   ?? null });
-      if (child)  next.set(orphan.nextBlockId!,   { ...child,  parentBlockId: orphan.parentBlockId ?? null });
-    }
-
-    // Clear the socket in the parent block that was holding this query block.
-    if (orphan.embeddedInBlockId && orphan.embeddedSlotIndex >= 0) {
-      const parent = next.get(orphan.embeddedInBlockId);
-      if (parent) {
-        const slots = [...parent.paramSlots];
-        slots[orphan.embeddedSlotIndex] = { textValue: null, queryBlockId: null };
-        next.set(orphan.embeddedInBlockId, { ...parent, paramSlots: slots });
-      }
+    if (isMouthHead(orphan, next)) {
+      // The mouth now starts at the orphan's successor (or is empty).
+      const host = next.get(orphan.embeddedInBlockId!)!;
+      setSlot(next, host.instanceId, orphan.embeddedSlotIndex,
+        { ...host.paramSlots[orphan.embeddedSlotIndex], commandBlockId: child?.instanceId ?? null });
+      if (child) next.set(child.instanceId, {
+        ...child, parentBlockId: null,
+        embeddedInBlockId: orphan.embeddedInBlockId, embeddedSlotIndex: orphan.embeddedSlotIndex,
+      });
+    } else if (orphan.embeddedInBlockId && orphan.embeddedSlotIndex >= 0) {
+      // Clear the socket in the parent block that was holding this query block.
+      setSlot(next, orphan.embeddedInBlockId, orphan.embeddedSlotIndex, { textValue: null, queryBlockId: null });
+    } else if (orphan.parentBlockId) {
+      // Stitch command chain past this block so downstream blocks aren't stranded.
+      const parent = next.get(orphan.parentBlockId);
+      if (parent) next.set(parent.instanceId, { ...parent, nextBlockId: child?.instanceId ?? null });
+      if (child) next.set(child.instanceId, { ...child, parentBlockId: orphan.parentBlockId });
+    } else if (child) {
+      // A removed root: its successor becomes the root, where the orphan was.
+      next.set(child.instanceId, { ...child, parentBlockId: null, x: orphan.x, y: orphan.y });
     }
   }
 
-  // Remove orphans and any query blocks they themselves embed.
-  const allToRemove = new Set(gatherWithDescendants(orphanIds, blocks));
   allToRemove.forEach(id => next.delete(id));
   return next;
+}
+
+/**
+ * Returns a new canvas map with the block made a root at (x, y): its socket or mouth emptied, or the chain above it
+ * cut. The blocks after it (and everything it holds) stay with it. Pure — does not mutate the input.
+ */
+function detached(blocks: Map<string, PlacedBlock>, instanceId: string, x: number, y: number): Map<string, PlacedBlock> {
+  const block = blocks.get(instanceId);
+  if (!block || (!block.embeddedInBlockId && !block.parentBlockId)) return blocks;
+  const next = new Map(blocks);
+  if (block.embeddedInBlockId) {
+    const slot = next.get(block.embeddedInBlockId)?.paramSlots[block.embeddedSlotIndex];
+    if (slot) {
+      setSlot(next, block.embeddedInBlockId, block.embeddedSlotIndex, isMouthHead(block, next)
+        ? { ...slot, commandBlockId: null }
+        : { ...slot, textValue: null, queryBlockId: null });
+    }
+  }
+  if (block.parentBlockId) {
+    const parent = next.get(block.parentBlockId);
+    if (parent) next.set(parent.instanceId, { ...parent, nextBlockId: null });
+  }
+  next.set(instanceId, { ...block, x, y, parentBlockId: null, embeddedInBlockId: null, embeddedSlotIndex: -1 });
+  return next;
+}
+
+/** Where a carried chain can attach: under a chain's last block, or at the top of a mouth. */
+type ChainSnap =
+  | { kind: 'next';  blockId: string; snapX: number; snapY: number; dist: number }
+  | { kind: 'mouth'; blockId: string; slotIndex: number; snapX: number; snapY: number; dist: number };
+
+/**
+ * Attaches the root chain from `leadId` to `tailId` at the snap target and moves its lead there. At the top of an
+ * occupied mouth, the mouth's old chain follows the carried chain's tail. Mutates `blocks`, which must be a copy.
+ */
+function attachChain(blocks: Map<string, PlacedBlock>, leadId: string, tailId: string, snap: ChainSnap) {
+  const lead = blocks.get(leadId)!;
+  if (snap.kind === 'next') {
+    const parent = blocks.get(snap.blockId)!;
+    blocks.set(snap.blockId, { ...parent, nextBlockId: leadId });
+    blocks.set(leadId, { ...lead, x: snap.snapX, y: snap.snapY, parentBlockId: snap.blockId });
+    return;
+  }
+  const host = blocks.get(snap.blockId)!;
+  const slot = host.paramSlots[snap.slotIndex];
+  const oldHeadId = slot?.commandBlockId ?? null;
+  setSlot(blocks, snap.blockId, snap.slotIndex, slot
+    ? { ...slot, commandBlockId: leadId }
+    : { textValue: null, queryBlockId: null, commandBlockId: leadId });
+  blocks.set(leadId, {
+    ...lead, x: snap.snapX, y: snap.snapY, parentBlockId: null,
+    embeddedInBlockId: snap.blockId, embeddedSlotIndex: snap.slotIndex,
+  });
+  const oldHead = oldHeadId ? blocks.get(oldHeadId) : undefined;
+  if (oldHead) {
+    blocks.set(oldHead.instanceId, { ...oldHead, parentBlockId: tailId, embeddedInBlockId: null, embeddedSlotIndex: -1 });
+    blocks.set(tailId, { ...blocks.get(tailId)!, nextBlockId: oldHead.instanceId });
+  }
 }
 
 /** Creates a fresh PlacedBlock with empty parameter slots. */
@@ -185,20 +272,29 @@ function collectChain(startId: string, blocks: Map<string, PlacedBlock>): string
   return chain;
 }
 
-/** Walks parentBlockId links upward to find the root of a chain. */
+/** Walks parentBlockId links (and out of mouths) upward to find the root of a chain. */
 function findChainRoot(id: string, blocks: Map<string, PlacedBlock>): string {
   const block = blocks.get(id);
-  return block?.parentBlockId ? findChainRoot(block.parentBlockId, blocks) : id;
+  if (block?.parentBlockId) return findChainRoot(block.parentBlockId, blocks);
+  if (block && isMouthHead(block, blocks)) return findChainRoot(block.embeddedInBlockId!, blocks);
+  return id;
 }
 
 /**
  * Formats one block as a console output line:
- *   "block-id(param1, param2)"  — always parentheses, strings quoted, empty slots → _
+ *   "block-id(param1, param2)"  — always parentheses, strings quoted, empty slots → _,
+ *   a mouth → "{ A(...); B(...) }"
  */
 function formatOutputLine(block: PlacedBlock, blocks: Map<string, PlacedBlock>): string {
   const def  = tryGetDefinition(block.definitionId);
   if (!def) return `[missing:${block.definitionId}]`;
   const args = block.paramSlots.map((slot, i) => {
+    const param = def.params[i];
+    if (param && isCommandParam(def, param)) {
+      const chain = slot.commandBlockId ? collectChain(slot.commandBlockId, blocks) : [];
+      const lines = chain.map(id => blocks.get(id)).filter(Boolean).map(b => formatOutputLine(b!, blocks));
+      return lines.length > 0 ? `{ ${lines.join('; ')} }` : '{ }';
+    }
     if (slot.queryBlockId) {
       const embedded = blocks.get(slot.queryBlockId);
       if (embedded) return formatOutputLine(embedded, blocks);
@@ -269,16 +365,12 @@ function DragGhost({ ghostPos, dragRef, blocks }: DragGhostProps) {
     }
   }
 
-  // Palette drag: simple ghost (new block has no embedded params yet)
+  // Palette drag: simple ghost (new block has no embedded params yet, and empty mouths)
   const def = getDefinition(ghostPos.defId);
-  const w   = getBlockWidth(def);
-  const bh  = getBlockHeight(def);
-  const h   = def.blockType === 'query' ? QUERY_H : bh;
+  const h   = getBlockHeight(def);
   const isCommand = def.blockType === 'command';
-  let path: string;
-  if      (def.blockType === 'start')   path = hatBlockPath(w, bh);
-  else if (def.blockType === 'command') path = commandBlockPath(w, h);
-  else                                  path = queryBlockPath(def.returnType!, w, h);
+  const path = blockPath(def);
+  const mouths = getMouthPositions(def);
 
   return (
     <svg style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 9999 }}>
@@ -290,13 +382,19 @@ function DragGhost({ ghostPos, dragRef, blocks }: DragGhostProps) {
       <g transform={`translate(${ghostPos.x},${ghostPos.y})`} opacity={0.8}>
         <path d={path} fill={isCommand ? theme.blockBody : def.color} stroke={isCommand ? theme.blockBorder : 'rgba(0,0,0,0.4)'} strokeWidth={1.5} />
         {isCommand && <rect x={0} y={0} width={4} height={h + 20} fill={def.color} clipPath="url(#ghost-pal-clip)" />}
-        <text x={11} y={h / 2 + 4} fill={isCommand ? theme.blockText : 'white'} fontSize={11} fontWeight="bold"
+        {mouths.length > 0 && <MouthDecorations mouths={mouths} w={getBlockWidth(def)} isEmpty={() => true} />}
+        <text x={11} y={getHeaderHeight(def) / 2 + 4} fill={isCommand ? theme.blockText : 'white'} fontSize={11} fontWeight="bold"
           fontFamily="sans-serif" style={{ userSelect: 'none' }}>
           {def.name}
         </text>
       </g>
     </svg>
   );
+}
+
+/** Whether a query fits a socket of the type: it returns that type, or its result can be used as it. */
+function fitsSocket(query: BlockDefinition, socketType: ParamType): boolean {
+  return query.returnType === socketType || (query.usableAs?.includes(socketType) ?? false);
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -345,6 +443,11 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
   const [registryVersion, setRegistryVersion]     = useState(0);
   const [availablePackages, setAvailablePackages] = useState<PackageInfo[]>([]);
   const [loadedPackages, setLoadedPackages]       = useState<LoadedPackage[]>([]);
+
+  // Where every block is drawn (non-root blocks are placed by the block they hang off). It depends on the definitions
+  // in the registry too, which change with registryVersion (e.g. when they load after an initial state).
+  // (The same pattern as the palette's definitions; the hooks linter warns that registryVersion looks unused.)
+  const layout = useMemo(() => computeLayout(blocks), [blocks, registryVersion]);
 
   // Keep getStateRef current so the parent can read canvas state on demand.
   useEffect(() => {
@@ -412,32 +515,9 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
   const handlePackageToggle = useCallback(async (pkg: PackageInfo, currentlyLoaded: boolean) => {
     if (currentlyLoaded) {
       // Remove canvas blocks whose definition belongs to this package before unloading
-      const loaded = getLoadedPackages().find(lp => lp.info.id === pkg.id);
-      if (loaded) {
-        const removedDefIds = new Set(loaded.blockIds);
-        setBlocks(prev => {
-          const next = new Map(prev);
-          // Find top-level blocks from the unloaded package
-          const rootsToRemove: string[] = [];
-          next.forEach(block => {
-            if (removedDefIds.has(block.definitionId)) rootsToRemove.push(block.instanceId);
-          });
-          // Collect embedded query blocks too
-          const allToRemove = new Set(gatherWithDescendants(rootsToRemove, next));
-          // Clean up dangling chain links on surviving blocks
-          next.forEach(block => {
-            if (allToRemove.has(block.instanceId)) return;
-            let changed = false;
-            let updated = block;
-            if (block.nextBlockId   && allToRemove.has(block.nextBlockId))   { updated = { ...updated, nextBlockId: null };   changed = true; }
-            if (block.parentBlockId && allToRemove.has(block.parentBlockId)) { updated = { ...updated, parentBlockId: null }; changed = true; }
-            if (changed) next.set(block.instanceId, updated);
-          });
-          allToRemove.forEach(id => next.delete(id));
-          return next;
-        });
-      }
+      // Its blocks lose their definitions: remove them (and what they hold), repairing the chains around them.
       unloadPackage(pkg.id);
+      setBlocks(prev => withOrphansRemoved(prev));
     } else {
       await loadPackage(pkg);
     }
@@ -454,23 +534,43 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
 
   // ── Snap detection ───────────────────────────────────────────────────────────
 
-  const findSnapTarget = useCallback((svgX: number, svgY: number, exclude: Set<string>): SnapResult | null => {
+  /**
+   * Where a chain led by a block of `leadDefId`, dropped with its top-left at (svgX, svgY), attaches: under the last
+   * block of any chain (also in a mouth), or at the top of a mouth, empty or not. Only command chains attach.
+   * `exclude` holds the carried blocks and everything they hold, so a chain never snaps into itself.
+   */
+  const findSnapTarget = useCallback((svgX: number, svgY: number, leadDefId: string, exclude: Set<string>): ChainSnap | null => {
     const SNAP_DISTANCE = 24;
-    let best: SnapResult | null = null;
+    // Only a command has an inlet: a start block never attaches under anything.
+    if (tryGetDefinition(leadDefId)?.blockType !== 'command') return null;
+    let best: ChainSnap | null = null;
+    const consider = (candidate: ChainSnap) => {
+      if (!best || candidate.dist < best.dist) best = candidate;
+    };
+    const distanceTo = (x: number, y: number) => {
+      const dx = Math.abs(svgX - x);
+      const dy = Math.abs(svgY - y);
+      return dx < 40 && dy < SNAP_DISTANCE ? Math.hypot(dx, dy) : null;
+    };
     blocks.forEach((block) => {
-      if (exclude.has(block.instanceId) || block.embeddedInBlockId || block.nextBlockId) return;
+      if (exclude.has(block.instanceId)) return;
       const def = tryGetDefinition(block.definitionId);
-      if (!def || def.blockType === 'query') return;
-      const blockBottom = block.y + getBlockHeight(def);
-      const dx = Math.abs(svgX - block.x);
-      const dy = Math.abs(svgY - blockBottom);
-      if (dx < 40 && dy < SNAP_DISTANCE) {
-        const dist = Math.hypot(dx, dy);
-        if (!best || dist < best.dist) best = { blockId: block.instanceId, snapX: block.x, snapY: blockBottom, dist };
+      const pos = layout.get(block.instanceId);
+      if (!def || def.blockType === 'query' || !pos) return;
+      if (!block.nextBlockId) {
+        const bottom = pos.y + getBlockHeight(def, block.paramSlots, blocks);
+        const dist = distanceTo(pos.x, bottom);
+        if (dist !== null) consider({ kind: 'next', blockId: block.instanceId, snapX: pos.x, snapY: bottom, dist });
+      }
+      for (const mouth of getMouthPositions(def, block.paramSlots, blocks)) {
+        const x = pos.x + mouth.x;
+        const y = pos.y + mouth.y;
+        const dist = distanceTo(x, y);
+        if (dist !== null) consider({ kind: 'mouth', blockId: block.instanceId, slotIndex: mouth.index, snapX: x, snapY: y, dist });
       }
     });
     return best;
-  }, [blocks]);
+  }, [blocks, layout]);
 
   const findSocketSnap = useCallback((svgX: number, svgY: number, defId: string, exclude: Set<string>): SockResult | null => {
     const draggedDef = tryGetDefinition(defId);
@@ -480,24 +580,25 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
     blocks.forEach((block) => {
       if (exclude.has(block.instanceId)) return;
       const blockDef = tryGetDefinition(block.definitionId);
-      if (!blockDef) return;
+      const pos      = layout.get(block.instanceId);
+      if (!blockDef || !pos) return;
       const sockets  = getSocketPositions(blockDef, block.paramSlots, blocks);
       sockets.forEach((socket) => {
-        if (socket.type !== draggedDef.returnType) return;
+        if (!fitsSocket(draggedDef, socket.type)) return;
         if (block.paramSlots[socket.index]?.queryBlockId) return;
-        const centerX = block.x + socket.x + socket.w / 2;
-        const centerY = block.y + socket.y + socket.h / 2;
+        const centerX = pos.x + socket.x + socket.w / 2;
+        const centerY = pos.y + socket.y + socket.h / 2;
         const dx = Math.abs(svgX + socket.w / 2 - centerX);
         const dy = Math.abs(svgY + socket.h / 2 - centerY);
         if (dx < socket.w / 2 + SNAP_DISTANCE && dy < socket.h / 2 + SNAP_DISTANCE) {
           const dist = Math.hypot(dx, dy);
           if (!best || dist < best.dist)
-            best = { blockId: block.instanceId, slotIndex: socket.index, snapX: block.x + socket.x, snapY: block.y + socket.y, dist };
+            best = { blockId: block.instanceId, slotIndex: socket.index, snapX: pos.x + socket.x, snapY: pos.y + socket.y, dist };
         }
       });
     });
     return best;
-  }, [blocks]);
+  }, [blocks, layout]);
 
   // ── Interaction handlers ─────────────────────────────────────────────────────
 
@@ -553,62 +654,27 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
     if (!block) return;
     const { x: svgX, y: svgY } = toSVG(e.clientX, e.clientY);
 
-    // For embedded blocks, compute actual position from parent + socket offset.
-    // The stored x,y may be stale if the parent moved after the block was embedded.
-    let blockX = block.x;
-    let blockY = block.y;
-    if (block.embeddedInBlockId) {
-      const parent = blocks.get(block.embeddedInBlockId);
-      if (parent) {
-        const sockets = getSocketPositions(getDefinition(parent.definitionId), parent.paramSlots, blocks);
-        const socket  = sockets[block.embeddedSlotIndex];
-        if (socket) { blockX = parent.x + socket.x; blockY = parent.y + socket.y; }
-      }
-    }
+    // Where the block is drawn; only a root's stored x,y is its position.
+    const { x: blockX, y: blockY } = layout.get(instanceId) ?? block;
 
     const offsetX = svgX - blockX;
     const offsetY = svgY - blockY;
 
     const def   = tryGetDefinition(block.definitionId);
-    // Orphaned blocks (missing def) are treated as single-block drags so the
-    // user can drag them to the palette to delete them.
+    // A query is dragged alone; any other block takes the blocks below it along (out of a mouth too).
     const chain = def?.blockType === 'query' ? [instanceId] : collectChain(instanceId, blocks);
 
-    if (block.embeddedInBlockId || block.parentBlockId) {
-      const embParentId   = block.embeddedInBlockId;
-      const embSlotIdx    = block.embeddedSlotIndex;
-      const chainParentId = block.parentBlockId;
-      setBlocks(prev => {
-        const next = new Map(prev);
-        if (embParentId) {
-          const parent = next.get(embParentId);
-          if (parent) {
-            const slots = [...parent.paramSlots];
-            slots[embSlotIdx] = { textValue: null, queryBlockId: null };
-            next.set(embParentId, { ...parent, paramSlots: slots });
-          }
-          next.set(instanceId, { ...block, x: blockX, y: blockY, embeddedInBlockId: null, embeddedSlotIndex: -1 });
-        }
-        if (chainParentId) {
-          const parent = next.get(chainParentId);
-          if (parent) next.set(chainParentId, { ...parent, nextBlockId: null });
-          const block = next.get(instanceId);
-          if (block) next.set(instanceId, { ...block, parentBlockId: null });
-        }
-        return next;
-      });
-    }
-
+    // The block is detached once the pointer moves (a click leaves it where it is).
     dragRef.current = {
       type: 'canvas', defId: block.definitionId, instanceId,
-      carriedIds: chain, offsetX, offsetY,
+      carriedIds: chain, detachAt: { x: blockX, y: blockY }, offsetX, offsetY,
       startClientX: e.clientX, startClientY: e.clientY,
       moved: false,
     };
     setDraggingIds(new Set(chain));
     setGhostPos({ x: e.clientX - offsetX, y: e.clientY - offsetY, defId: block.definitionId });
     (e.target as Element).setPointerCapture(e.pointerId);
-  }, [blocks, toSVG]);
+  }, [blocks, layout, toSVG]);
 
   // ── Global pointer events ────────────────────────────────────────────────────
 
@@ -616,8 +682,11 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
     function onPointerMove(e: PointerEvent) {
       const drag = dragRef.current;
       if (!drag) return;
-      if (Math.abs(e.clientX - drag.startClientX) > 4 || Math.abs(e.clientY - drag.startClientY) > 4)
+      if (!drag.moved && (Math.abs(e.clientX - drag.startClientX) > 4 || Math.abs(e.clientY - drag.startClientY) > 4)) {
         drag.moved = true;
+        const { instanceId, detachAt } = drag;
+        if (instanceId && detachAt) setBlocks(prev => detached(prev, instanceId, detachAt.x, detachAt.y));
+      }
       if (!drag.moved) return;
       setGhostPos({ x: e.clientX - drag.offsetX, y: e.clientY - drag.offsetY, defId: drag.defId });
 
@@ -667,15 +736,12 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
         const newBlock = createBlock(drag.defId, dropX, dropY);
 
         if (def.blockType !== 'query') {
-          const snap = findSnapTarget(dropX, dropY, new Set());
+          const snap = findSnapTarget(dropX, dropY, drag.defId, new Set());
           if (snap) {
-            const { blockId: snapId, snapX, snapY } = snap;
-            newBlock.x = snapX; newBlock.y = snapY; newBlock.parentBlockId = snapId;
             setBlocks(prev => {
               const next = new Map(prev);
-              const parent = next.get(snapId)!;
-              next.set(snapId, { ...parent, nextBlockId: newBlock.instanceId });
               next.set(newBlock.instanceId, newBlock);
+              attachChain(next, newBlock.instanceId, newBlock.instanceId, snap);
               return next;
             });
             return;
@@ -707,31 +773,16 @@ export default function BlockEditor({ blocksUrl = '/blocks.json', blocksUrls, on
           const lead = next.get(leadId);
           if (!lead) return prev;
 
-          const deltaX = dropX - lead.x;
-          const deltaY = dropY - lead.y;
-          // Move carried blocks AND all query blocks embedded in their sockets
-          const allToMove = gatherWithDescendants(drag.carriedIds!, next);
-          allToMove.forEach(id => {
-            const block = next.get(id);
-            if (block) next.set(id, { ...block, x: block.x + deltaX, y: block.y + deltaY });
-          });
+          // The carried blocks hang off the lead (a root since pointer-down), so moving it moves them all.
+          next.set(leadId, { ...lead, x: dropX, y: dropY });
+          // Never snap into the carried chain or anything it holds.
+          const carried = new Set(gatherWithDescendants(drag.carriedIds!, next));
 
           if (def.blockType !== 'query') {
-            const snap = findSnapTarget(dropX, dropY, new Set(drag.carriedIds!));
-            if (snap) {
-              const { blockId: snapId, snapX, snapY } = snap;
-              const nudgeX = snapX - dropX;
-              const nudgeY = snapY - dropY;
-              drag.carriedIds!.forEach(id => {
-                const block = next.get(id);
-                if (block) next.set(id, { ...block, x: block.x + nudgeX, y: block.y + nudgeY });
-              });
-              const parent = next.get(snapId)!;
-              next.set(snapId, { ...parent, nextBlockId: leadId });
-              next.set(leadId, { ...next.get(leadId)!, parentBlockId: snapId });
-            }
+            const snap = findSnapTarget(dropX, dropY, drag.defId, carried);
+            if (snap) attachChain(next, leadId, drag.carriedIds![drag.carriedIds!.length - 1], snap);
           } else {
-            const socketSnap = findSocketSnap(dropX, dropY, drag.defId, new Set([leadId]));
+            const socketSnap = findSocketSnap(dropX, dropY, drag.defId, carried);
             if (socketSnap) {
               const { blockId: parentId, slotIndex, snapX, snapY } = socketSnap;
               const block = next.get(leadId)!;

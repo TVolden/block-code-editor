@@ -2,6 +2,9 @@
 export type ParamType = string;
 export type BlockType = 'command' | 'query' | 'start';
 
+/** The parameter type that holds a chain of commands; a command block draws it as a C-shaped mouth. */
+export const COMMAND_PARAM_TYPE = 'command';
+
 export interface BlockParam {
   name: string;
   type: ParamType;
@@ -26,6 +29,11 @@ export interface BlockDefinition {
   name: string;
   blockType: BlockType;
   returnType?: ParamType;
+  /**
+   * For a query: the other types its result can be used as, so it also fits sockets of those types (e.g. a 'Deck' that is
+   * a 'CardCollection', or an 'int' that is a 'double').
+   */
+  usableAs?: ParamType[];
   params: BlockParam[];
   /** Context queries this event guarantees are valid. Only meaningful on start blocks. */
   provides?: BlockProvide[];
@@ -36,6 +44,12 @@ export interface BlockDefinition {
 export interface ParamSlot {
   textValue: string | null;
   queryBlockId: string | null;
+  /**
+   * For a command parameter of a command block (a C-shaped mouth): the first block of the chain it holds, or null when
+   * empty. That block has `embeddedInBlockId` = the host and `embeddedSlotIndex` = the parameter's index; the blocks after
+   * it are linked by `nextBlockId` / `parentBlockId` as in any chain. Optional, so canvases saved before mouths load.
+   */
+  commandBlockId?: string | null;
 }
 
 export interface PlacedBlock {

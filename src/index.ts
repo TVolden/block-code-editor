@@ -1,6 +1,7 @@
 export { default } from './editor/BlockEditor';
 export { default as BlockEditor } from './editor/BlockEditor';
-export type { SerializedCanvas, BlockDefinition, ParamType, BlockType } from './types';
+export type { SerializedCanvas, BlockDefinition, ParamType, BlockType, PlacedBlock, ParamSlot } from './types';
+export { COMMAND_PARAM_TYPE } from './types';
 export { default as CardDesigner } from './carddesigner/CardDesigner';
 export { default as CardPreview } from './carddesigner/CardPreview';
 export type { CardDesign, CardMeta } from './carddesigner/cardDesignTypes';

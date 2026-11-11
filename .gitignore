@@ -10,6 +10,9 @@ packages/editor/dist-embed/
 packages/platform/.next/
 packages/platform/out/
 
+# Packed tarballs (npm pack), which the platform installs from while a version isn't published
+*.tgz
+
 # TypeScript cache
 *.tsbuildinfo
 

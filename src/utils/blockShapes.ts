@@ -1,4 +1,5 @@
-import type { ParamType } from '../types';
+import type { BlockDefinition, ParamSlot, ParamType, PlacedBlock } from '../types';
+import { getBlockHeight, getBlockWidth, getMouthPositions, MOUTH_INDENT } from './blockLayout';
 
 // ── Connector tab ─────────────────────────────────────────────────────────────
 // Fixed-position triangle at the left of each block so blocks of different
@@ -21,6 +22,42 @@ export function commandBlockPath(w: number, h: number): string {
     `H ${R} Q 0 ${h} 0 ${h - R}`,
     `V ${R} Q 0 0 ${R} 0 Z`,
   ].join(' ');
+}
+
+/**
+ * A C-block: a command block with a mouth per command parameter (`mouths`: their top and height, relative to the
+ * block). Each mouth's roof has an outlet tab for the first block of its chain, and its floor an inlet for the last
+ * block's tab, both `indent` in from the left edge. The block's own inlet and outlet sit where a command block's do.
+ */
+export function cBlockPath(w: number, h: number, indent: number, mouths: { y: number; h: number }[]): string {
+  const parts = [
+    `M ${R} 0`,
+    // Top edge with inlet
+    `H ${CONN_L} L ${CONN_MID} ${CONN_H} L ${CONN_L + CONN_W} 0`,
+    `H ${w - R} Q ${w} 0 ${w} ${R}`,
+  ];
+  for (const mouth of mouths) {
+    const top = mouth.y;
+    const bottom = mouth.y + mouth.h;
+    parts.push(
+      // Right edge down to the mouth, then its roof leftwards with an outlet tab into the mouth
+      `V ${top}`,
+      `H ${indent + CONN_L + CONN_W} L ${indent + CONN_MID} ${top + CONN_H} L ${indent + CONN_L} ${top}`,
+      `H ${indent}`,
+      // Inner wall, then the floor rightwards with an inlet for the chain's last tab
+      `V ${bottom}`,
+      `H ${indent + CONN_L} L ${indent + CONN_MID} ${bottom + CONN_H} L ${indent + CONN_L + CONN_W} ${bottom}`,
+      `H ${w}`,
+    );
+  }
+  parts.push(
+    `V ${h - R} Q ${w} ${h} ${w - R} ${h}`,
+    // Bottom edge with outlet
+    `H ${CONN_L + CONN_W} L ${CONN_MID} ${h + CONN_H} L ${CONN_L} ${h}`,
+    `H ${R} Q 0 ${h} 0 ${h - R}`,
+    `V ${R} Q 0 0 ${R} 0 Z`,
+  );
+  return parts.join(' ');
 }
 
 export function hatBlockPath(w: number, h: number): string {
@@ -82,4 +119,18 @@ export function queryBlockPath(returnType: ParamType, w: number, h: number): str
 
 export function socketPath(paramType: ParamType, w: number, h: number): string {
   return queryBlockPath(paramType, w, h);
+}
+
+/** The outline of a block of the definition: a C-block's mouths sized to their chains (empty without slots and blocks). */
+export function blockPath(
+  def: BlockDefinition,
+  paramSlots?: ParamSlot[],
+  allBlocks?: Map<string, PlacedBlock>,
+): string {
+  const w = getBlockWidth(def, paramSlots, allBlocks);
+  const h = getBlockHeight(def, paramSlots, allBlocks);
+  if (def.blockType === 'start') return hatBlockPath(w, h);
+  if (def.blockType === 'query') return queryBlockPath(def.returnType!, w, h);
+  const mouths = getMouthPositions(def, paramSlots, allBlocks);
+  return mouths.length > 0 ? cBlockPath(w, h, MOUTH_INDENT, mouths) : commandBlockPath(w, h);
 }

@@ -19,7 +19,8 @@ const Canvas = forwardRef<SVGSVGElement, Props>(
   ({ blocks, draggingIds, onBlockPointerDown, onBlockClick, onSocketClick,
      editingSocket, onSocketCommit, onSocketCancelEdit, onOutputDrag }, ref) => {
     const theme = useTheme();
-    const rootBlocks = [...blocks.values()].filter(b => !b.embeddedInBlockId);
+    // Only roots: each draws the blocks chained under it, embedded in its sockets and held in its mouths.
+    const rootBlocks = [...blocks.values()].filter(b => !b.embeddedInBlockId && !b.parentBlockId);
 
     return (
       <svg

@@ -1,9 +1,14 @@
 import React from 'react';
 import type { PlacedBlock } from '../types';
 import { tryGetDefinition } from '../blockRegistry';
-import { commandBlockPath, hatBlockPath, queryBlockPath, socketPath } from '../utils/blockShapes';
-import { getBlockWidth, getBlockHeight, getSocketPositions, getPillWidth, PRIMITIVE_TYPES, HAT_H, OUTPUT_ROW_H, QUERY_H } from '../utils/blockLayout';
+import { blockPath, queryBlockPath, socketPath } from '../utils/blockShapes';
+import {
+  getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillWidth,
+  socketTitle, HAT_H, OUTPUT_ROW_H, QUERY_H, MISSING_H,
+} from '../utils/blockLayout';
 import { useTheme } from '../ThemeContext';
+import { MouthDecorations } from './MouthDecorations';
+import { SocketHint } from './SocketHint';
 
 interface Props {
   block: PlacedBlock;
@@ -45,23 +50,42 @@ function isInProvidedScope(block: PlacedBlock, defId: string, allBlocks: Map<str
   }
 }
 
-function buildBlockPath(block: PlacedBlock, allBlocks: Map<string, PlacedBlock>): string {
-  // def is guaranteed to exist here — callers check before invoking.
-  const def = tryGetDefinition(block.definitionId)!;
-  const w   = getBlockWidth(def, block.paramSlots, allBlocks);
-  const h   = getBlockHeight(def);
-  if (def.blockType === 'start')   return hatBlockPath(w, h);
-  if (def.blockType === 'command') return commandBlockPath(w, h);
-  return queryBlockPath(def.returnType!, w, h);
-}
-
-export function BlockRenderer({
-  block, allBlocks, onPointerDown, onBlockClick, onSocketClick,
-  editingSocket, onSocketCommit, onSocketCancelEdit, onOutputDrag,
-  isGhost, isDragging, embedded,
-}: Props) {
+/**
+ * Draws a block and everything that hangs off it: the queries in its sockets, the chains in its mouths, and the block
+ * chained under it (recursively), so a growing C-block moves the blocks below it and never hides its contents.
+ * Roots are placed at their own x/y; everything else (`embedded`) is placed by the block that draws it.
+ */
+export function BlockRenderer(props: Props) {
+  const {
+    block, allBlocks, onPointerDown, onBlockClick, onSocketClick,
+    editingSocket, onSocketCommit, onSocketCancelEdit, onOutputDrag,
+    isGhost, isDragging, embedded,
+  } = props;
   const theme = useTheme();
   const def   = tryGetDefinition(block.definitionId);
+
+  /** Draws a block that hangs off this one, at (x, y) relative to it. */
+  const renderChild = (childId: string | null | undefined, x: number, y: number, key: string) => {
+    const child = childId ? allBlocks.get(childId) : undefined;
+    if (!child) return null;
+    return (
+      <g key={key} transform={`translate(${x},${y})`}>
+        <BlockRenderer
+          block={child}
+          allBlocks={allBlocks}
+          onPointerDown={onPointerDown}
+          onBlockClick={onBlockClick}
+          onSocketClick={onSocketClick}
+          editingSocket={editingSocket}
+          onSocketCommit={onSocketCommit}
+          onSocketCancelEdit={onSocketCancelEdit}
+          onOutputDrag={onOutputDrag}
+          isGhost={isGhost}
+          embedded
+        />
+      </g>
+    );
+  };
 
   // ── Missing-definition placeholder ────────────────────────────────────────
   // Shown when a block references a collection (or other definition) that has
@@ -80,29 +104,32 @@ export function BlockRenderer({
       <g
         transform={(isGhost || embedded) ? undefined : `translate(${block.x},${block.y})`}
         opacity={isDragging ? 0.35 : 0.85}
-        onPointerDown={handlePointerDown}
-        onClick={handleClick}
-        style={{ cursor: 'grab' }}
       >
-        <rect x={0} y={0} width={160} height={24} rx={3}
-          fill="rgba(160,40,40,0.18)" stroke="#c05050" strokeWidth={1.5} strokeDasharray="5,3" />
-        <text x={8} y={16} fill="#c05050" fontSize={10} fontFamily="sans-serif"
-          fontStyle="italic" style={{ userSelect: 'none', pointerEvents: 'none' }}>
-          ⚠ {shortId} (missing)
-        </text>
+        <g onPointerDown={handlePointerDown} onClick={handleClick} style={{ cursor: 'grab' }}>
+          <rect x={0} y={0} width={160} height={MISSING_H} rx={3}
+            fill="rgba(160,40,40,0.18)" stroke="#c05050" strokeWidth={1.5} strokeDasharray="5,3" />
+          <text x={8} y={16} fill="#c05050" fontSize={10} fontFamily="sans-serif"
+            fontStyle="italic" style={{ userSelect: 'none', pointerEvents: 'none' }}>
+            ⚠ {shortId} (missing)
+          </text>
+        </g>
+        {renderChild(block.nextBlockId, 0, MISSING_H, 'next')}
       </g>
     );
   }
 
   const w       = getBlockWidth(def, block.paramSlots, allBlocks);
-  const h       = getBlockHeight(def);
+  const h       = getBlockHeight(def, block.paramSlots, allBlocks);
+  const headerH = getHeaderHeight(def);
   const sockets = getSocketPositions(def, block.paramSlots, allBlocks);
-  const opacity = isGhost ? 0.75 : isDragging ? 0.35 : 1;
+  const mouths  = getMouthPositions(def, block.paramSlots, allBlocks);
+  // Blocks drawn by another block inherit its opacity.
+  const opacity = embedded ? 1 : isGhost ? 0.75 : isDragging ? 0.35 : 1;
 
   // All block types: neutral body + left color stripe
   const clipId = `clip-${isGhost ? 'g' : 'c'}-${block.instanceId}`;
 
-  const path = buildBlockPath(block, allBlocks);
+  const path = blockPath(def, block.paramSlots, allBlocks);
 
   const handlePointerDown = onPointerDown
     ? (e: React.PointerEvent) => { e.stopPropagation(); onPointerDown(e, block.instanceId); }
@@ -166,9 +193,9 @@ export function BlockRenderer({
       <rect x={0} y={0} width={4} height={h + 20}
         fill={def.color} clipPath={`url(#${clipId})`} />
 
-      {/* Block label — centred in the header area (HAT_H for start blocks, full h otherwise) */}
+      {/* Block label — centred in the header row */}
       <text
-        x={11} y={(def.blockType === 'start' ? HAT_H : h) / 2 + 4}
+        x={11} y={headerH / 2 + 4}
         fill={theme.blockText} fontSize={11} fontWeight="bold" fontFamily="sans-serif"
         style={{ userSelect: 'none', pointerEvents: 'none' }}
       >
@@ -228,28 +255,20 @@ export function BlockRenderer({
         const embId    = slot?.queryBlockId;
         const embBlock = embId ? allBlocks.get(embId) : null;
 
+        const paramName = def.params[sock.index].name;
+        const title     = socketTitle(paramName, sock.type);
+
+        // An embedded query: hovering it shows the parameter it fills.
         if (embBlock) {
           return (
-            <g key={sock.index} transform={`translate(${sock.x},${sock.y})`}>
-              <BlockRenderer
-                block={embBlock}
-                allBlocks={allBlocks}
-                onPointerDown={onPointerDown}
-                onBlockClick={onBlockClick}
-                onSocketClick={onSocketClick}
-                editingSocket={editingSocket}
-                onSocketCommit={onSocketCommit}
-                onSocketCancelEdit={onSocketCancelEdit}
-                onOutputDrag={onOutputDrag}
-                embedded
-              />
+            <g key={sock.index}>
+              <title>{title}</title>
+              {renderChild(embId, sock.x, sock.y, 'query')}
             </g>
           );
         }
 
         const tv        = slot?.textValue;
-        const paramName = def.params[sock.index]?.name;
-        const isCustom  = !PRIMITIVE_TYPES.has(sock.type);
         const isEditing = editingSocket?.blockId === block.instanceId
                        && editingSocket?.slotIndex === sock.index;
 
@@ -261,6 +280,7 @@ export function BlockRenderer({
             onClick={(e) => { e.stopPropagation(); onSocketClick?.(block.instanceId, sock.index); }}
             style={{ cursor: 'text' }}
           >
+            <title>{title}</title>
             <path d={socketPath(sock.type, sock.w, sock.h)}
               fill={isEditing ? theme.blockBorder : theme.socketBody}
               stroke={theme.blockBorder}
@@ -291,19 +311,22 @@ export function BlockRenderer({
               <text x={sock.w / 2} y={sock.h / 2 + 4} textAnchor="middle"
                 fill={theme.blockText} fontSize={10} fontFamily="sans-serif"
                 style={{ userSelect: 'none', pointerEvents: 'none' }}>{tv}</text>
-            ) : isCustom ? (
-              <text x={sock.w / 2} y={sock.h / 2 + 3} textAnchor="middle"
-                fill={theme.textSecondary} fontSize={9} fontFamily="sans-serif"
-                style={{ userSelect: 'none', pointerEvents: 'none' }}>{sock.type}</text>
-            ) : paramName ? (
-              <text x={sock.w / 2} y={sock.h / 2 + 3} textAnchor="middle"
-                fill={theme.textMuted} fontSize={9} fontFamily="sans-serif"
-                fontStyle="italic"
-                style={{ userSelect: 'none', pointerEvents: 'none' }}>{paramName}</text>
-            ) : null}
+            ) : (
+              <SocketHint name={paramName} type={sock.type} w={sock.w} h={sock.h} />
+            )}
           </g>
         );
       })}
+
+      {/* Mouths: divider names, empty placeholders, and the chains they hold */}
+      {mouths.length > 0 && (
+        <MouthDecorations mouths={mouths} w={w} isEmpty={(index) => !block.paramSlots[index]?.commandBlockId} />
+      )}
+      {mouths.map(mouth =>
+        renderChild(block.paramSlots[mouth.index]?.commandBlockId, mouth.x, mouth.y, `mouth-${mouth.index}`))}
+
+      {/* The rest of the chain */}
+      {renderChild(block.nextBlockId, 0, h, 'next')}
     </g>
   );
 }
