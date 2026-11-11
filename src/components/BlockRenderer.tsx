@@ -22,7 +22,8 @@ interface Props {
   /** Called when the user starts dragging an output pill from a start block. */
   onOutputDrag?: (e: React.PointerEvent, defId: string) => void;
   isGhost?: boolean;
-  isDragging?: boolean;
+  /** Blocks being dragged: drawn faded where they are (with everything hanging off them) until the drop. */
+  draggingIds?: Set<string>;
   embedded?: boolean;
 }
 
@@ -59,10 +60,11 @@ export function BlockRenderer(props: Props) {
   const {
     block, allBlocks, onPointerDown, onBlockClick, onSocketClick,
     editingSocket, onSocketCommit, onSocketCancelEdit, onOutputDrag,
-    isGhost, isDragging, embedded,
+    isGhost, draggingIds, embedded,
   } = props;
   const theme = useTheme();
   const def   = tryGetDefinition(block.definitionId);
+  const isDragging = draggingIds?.has(block.instanceId) ?? false;
 
   /** Draws a block that hangs off this one, at (x, y) relative to it. */
   const renderChild = (childId: string | null | undefined, x: number, y: number, key: string) => {
@@ -81,6 +83,7 @@ export function BlockRenderer(props: Props) {
           onSocketCancelEdit={onSocketCancelEdit}
           onOutputDrag={onOutputDrag}
           isGhost={isGhost}
+          draggingIds={draggingIds}
           embedded
         />
       </g>
@@ -124,7 +127,7 @@ export function BlockRenderer(props: Props) {
   const sockets = getSocketPositions(def, block.paramSlots, allBlocks);
   const mouths  = getMouthPositions(def, block.paramSlots, allBlocks);
   // Blocks drawn by another block inherit its opacity.
-  const opacity = embedded ? 1 : isGhost ? 0.75 : isDragging ? 0.35 : 1;
+  const opacity = isDragging ? 0.35 : isGhost && !embedded ? 0.75 : 1;
 
   // All block types: neutral body + left color stripe
   const clipId = `clip-${isGhost ? 'g' : 'c'}-${block.instanceId}`;

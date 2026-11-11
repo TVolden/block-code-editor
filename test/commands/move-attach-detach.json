@@ -1,0 +1,167 @@
+[
+  {
+    "name": "MoveBlock moves a root",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "MoveBlock", "id": "a", "from": { "x": 100, "y": 100 }, "to": { "x": 140, "y": 90 } },
+    "after": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 140, "y": 90, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] }
+  },
+  {
+    "name": "MoveBlock rejects a root that isn't where expected",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "MoveBlock", "id": "a", "from": { "x": 0, "y": 0 }, "to": { "x": 140, "y": 90 } },
+    "rejected": "POSITION_CHANGED"
+  },
+  {
+    "name": "MoveBlock rejects a linked block",
+    "before": { "blocks": [
+      { "instanceId": "s", "definitionId": "GameStarted", "x": 10, "y": 20, "nextBlockId": "a", "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": "s", "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "MoveBlock", "id": "a", "from": { "x": 0, "y": 0 }, "to": { "x": 140, "y": 90 } },
+    "rejected": "NOT_A_ROOT"
+  },
+  {
+    "name": "Attach links a root under a block (its position becomes 0, 0)",
+    "before": { "blocks": [
+      { "instanceId": "s", "definitionId": "GameStarted", "x": 10, "y": 20, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Attach", "id": "a", "to": { "next": "s" }, "from": { "x": 100, "y": 100 } },
+    "after": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": "s", "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "s", "definitionId": "GameStarted", "x": 10, "y": 20, "nextBlockId": "a", "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] }
+  },
+  {
+    "name": "Attach links a root into an empty mouth",
+    "before": { "blocks": [
+      { "instanceId": "e", "definitionId": "ExposeCommand", "x": 50, "y": 300, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": "Draw", "queryBlockId": null, "commandBlockId": null }, { "textValue": null, "queryBlockId": null, "commandBlockId": null }] },
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Attach", "id": "a", "to": { "mouth": "e", "slot": 1 }, "from": { "x": 100, "y": 100 } },
+    "after": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": "e", "embeddedSlotIndex": 1, "paramSlots": [] },
+      { "instanceId": "e", "definitionId": "ExposeCommand", "x": 50, "y": 300, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": "Draw", "queryBlockId": null, "commandBlockId": null }, { "textValue": null, "queryBlockId": null, "commandBlockId": "a" }] }
+    ], "dependencies": [] }
+  },
+  {
+    "name": "Attach links a query into an empty socket",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": null, "queryBlockId": null, "commandBlockId": null }] },
+      { "instanceId": "q", "definitionId": "GetCount", "x": 200, "y": 50, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Attach", "id": "q", "to": { "socket": "a", "slot": 0 }, "from": { "x": 200, "y": 50 } },
+    "after": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": null, "queryBlockId": "q", "commandBlockId": null }] },
+      { "instanceId": "q", "definitionId": "GetCount", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": "a", "embeddedSlotIndex": 0, "paramSlots": [] }
+    ], "dependencies": [] }
+  },
+  {
+    "name": "Attach rejects a block that already has a block under it",
+    "before": { "blocks": [
+      { "instanceId": "s", "definitionId": "GameStarted", "x": 10, "y": 20, "nextBlockId": "b", "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "b", "definitionId": "Shuffle", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": "s", "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Attach", "id": "a", "to": { "next": "s" }, "from": { "x": 100, "y": 100 } },
+    "rejected": "PLACE_OCCUPIED"
+  },
+  {
+    "name": "Attach rejects a socket with typed text",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": "3", "queryBlockId": null, "commandBlockId": null }] },
+      { "instanceId": "q", "definitionId": "GetCount", "x": 200, "y": 50, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Attach", "id": "q", "to": { "socket": "a", "slot": 0 }, "from": { "x": 200, "y": 50 } },
+    "rejected": "PLACE_OCCUPIED"
+  },
+  {
+    "name": "Attach rejects a place inside the block's own fragment",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": "b", "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "b", "definitionId": "Shuffle", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": "a", "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Attach", "id": "a", "to": { "next": "b" }, "from": { "x": 100, "y": 100 } },
+    "rejected": "CYCLE"
+  },
+  {
+    "name": "Attach rejects a block that is linked",
+    "before": { "blocks": [
+      { "instanceId": "s", "definitionId": "GameStarted", "x": 10, "y": 20, "nextBlockId": "a", "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": "s", "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "c", "definitionId": "Shuffle", "x": 300, "y": 300, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Attach", "id": "a", "to": { "next": "c" }, "from": { "x": 0, "y": 0 } },
+    "rejected": "NOT_A_ROOT"
+  },
+  {
+    "name": "Attach rejects a slot the block doesn't have",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "q", "definitionId": "GetCount", "x": 200, "y": 50, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Attach", "id": "q", "to": { "socket": "a", "slot": 2 }, "from": { "x": 200, "y": 50 } },
+    "rejected": "NO_SUCH_SLOT"
+  },
+  {
+    "name": "Attach rejects a target that doesn't exist",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Attach", "id": "a", "to": { "next": "nowhere" }, "from": { "x": 100, "y": 100 } },
+    "rejected": "BLOCK_NOT_FOUND"
+  },
+  {
+    "name": "Detach unlinks a block (with the blocks under it) from under another, making it a root",
+    "before": { "blocks": [
+      { "instanceId": "s", "definitionId": "GameStarted", "x": 10, "y": 20, "nextBlockId": "a", "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 0, "y": 0, "nextBlockId": "b", "parentBlockId": "s", "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "b", "definitionId": "Shuffle", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": "a", "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Detach", "id": "a", "from": { "next": "s" }, "to": { "x": 400, "y": 120 } },
+    "after": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 400, "y": 120, "nextBlockId": "b", "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "b", "definitionId": "Shuffle", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": "a", "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "s", "definitionId": "GameStarted", "x": 10, "y": 20, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] }
+  },
+  {
+    "name": "Detach empties a mouth",
+    "before": { "blocks": [
+      { "instanceId": "e", "definitionId": "ExposeCommand", "x": 50, "y": 300, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": null, "queryBlockId": null, "commandBlockId": "a" }] },
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": "e", "embeddedSlotIndex": 0, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Detach", "id": "a", "from": { "mouth": "e", "slot": 0 }, "to": { "x": 500, "y": 300 } },
+    "after": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 500, "y": 300, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "e", "definitionId": "ExposeCommand", "x": 50, "y": 300, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": null, "queryBlockId": null, "commandBlockId": null }] }
+    ], "dependencies": [] }
+  },
+  {
+    "name": "Detach empties a socket",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": null, "queryBlockId": "q", "commandBlockId": null }] },
+      { "instanceId": "q", "definitionId": "GetCount", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": "a", "embeddedSlotIndex": 0, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Detach", "id": "q", "from": { "socket": "a", "slot": 0 }, "to": { "x": 250, "y": 60 } },
+    "after": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": null, "queryBlockId": null, "commandBlockId": null }] },
+      { "instanceId": "q", "definitionId": "GetCount", "x": 250, "y": 60, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] }
+  },
+  {
+    "name": "Detach rejects a block that isn't at the given place",
+    "before": { "blocks": [
+      { "instanceId": "e", "definitionId": "ExposeCommand", "x": 50, "y": 300, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": null, "queryBlockId": null, "commandBlockId": "a" }] },
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": "e", "embeddedSlotIndex": 0, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Detach", "id": "a", "from": { "socket": "e", "slot": 0 }, "to": { "x": 500, "y": 300 } },
+    "rejected": "NOT_AT_PLACE"
+  }
+]

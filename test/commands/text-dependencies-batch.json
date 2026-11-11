@@ -1,0 +1,111 @@
+[
+  {
+    "name": "SetText types a value",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": null, "queryBlockId": null, "commandBlockId": null }] }
+    ], "dependencies": [] },
+    "command": { "type": "SetText", "blockId": "a", "slot": 0, "from": null, "to": "3" },
+    "after": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": "3", "queryBlockId": null, "commandBlockId": null }] }
+    ], "dependencies": [] }
+  },
+  {
+    "name": "SetText treats an empty string as no text",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": "3", "queryBlockId": null, "commandBlockId": null }] }
+    ], "dependencies": [] },
+    "command": { "type": "SetText", "blockId": "a", "slot": 0, "from": "3", "to": "" },
+    "after": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": null, "queryBlockId": null, "commandBlockId": null }] }
+    ], "dependencies": [] }
+  },
+  {
+    "name": "SetText rejects text that has changed",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": "2", "queryBlockId": null, "commandBlockId": null }] }
+    ], "dependencies": [] },
+    "command": { "type": "SetText", "blockId": "a", "slot": 0, "from": null, "to": "3" },
+    "rejected": "TEXT_CHANGED"
+  },
+  {
+    "name": "SetText rejects a parameter that holds a query",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": null, "queryBlockId": "q", "commandBlockId": null }] },
+      { "instanceId": "q", "definitionId": "GetCount", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": "a", "embeddedSlotIndex": 0, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "SetText", "blockId": "a", "slot": 0, "from": null, "to": "3" },
+    "rejected": "SLOT_HAS_QUERY"
+  },
+  {
+    "name": "SetText rejects a slot the block doesn't have",
+    "before": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 100, "y": 100, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "SetText", "blockId": "a", "slot": 0, "from": null, "to": "3" },
+    "rejected": "NO_SUCH_SLOT"
+  },
+  {
+    "name": "SetDependencies changes the packages (the order of 'from' doesn't matter)",
+    "before": { "blocks": [], "dependencies": [
+      { "publisher": "cardcq", "name": "collections", "version": "1.0.0" },
+      { "publisher": "cardcq", "name": "prompts", "version": "1.2.0" }
+    ] },
+    "command": { "type": "SetDependencies",
+      "from": [
+        { "publisher": "cardcq", "name": "prompts", "version": "1.2.0" },
+        { "publisher": "cardcq", "name": "collections", "version": "1.0.0" }
+      ],
+      "to": [
+        { "publisher": "cardcq", "name": "collections", "version": "1.1.0" }
+      ] },
+    "after": { "blocks": [], "dependencies": [
+      { "publisher": "cardcq", "name": "collections", "version": "1.1.0" }
+    ] }
+  },
+  {
+    "name": "SetDependencies rejects dependencies that have changed",
+    "before": { "blocks": [], "dependencies": [
+      { "publisher": "cardcq", "name": "collections", "version": "1.1.0" }
+    ] },
+    "command": { "type": "SetDependencies",
+      "from": [ { "publisher": "cardcq", "name": "collections", "version": "1.0.0" } ],
+      "to": [] },
+    "rejected": "DEPENDENCIES_CHANGED"
+  },
+  {
+    "name": "Batch applies its commands in order: a block from the palette attached under another",
+    "before": { "blocks": [
+      { "instanceId": "s", "definitionId": "GameStarted", "x": 10, "y": 20, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Batch", "commands": [
+      { "type": "InsertBlocks", "blocks": [
+        { "instanceId": "a", "definitionId": "DrawCard", "x": 12, "y": 75, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+      ] },
+      { "type": "Attach", "id": "a", "to": { "next": "s" }, "from": { "x": 12, "y": 75 } }
+    ] },
+    "after": { "blocks": [
+      { "instanceId": "a", "definitionId": "DrawCard", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": "s", "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "s", "definitionId": "GameStarted", "x": 10, "y": 20, "nextBlockId": "a", "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] }
+  },
+  {
+    "name": "Batch is all or nothing: a failing command rejects the whole batch",
+    "before": { "blocks": [
+      { "instanceId": "s", "definitionId": "GameStarted", "x": 10, "y": 20, "nextBlockId": "b", "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "b", "definitionId": "Shuffle", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": "s", "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+    ], "dependencies": [] },
+    "command": { "type": "Batch", "commands": [
+      { "type": "InsertBlocks", "blocks": [
+        { "instanceId": "a", "definitionId": "DrawCard", "x": 12, "y": 75, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] }
+      ] },
+      { "type": "Attach", "id": "a", "to": { "next": "s" }, "from": { "x": 12, "y": 75 } }
+    ] },
+    "rejected": "PLACE_OCCUPIED"
+  },
+  {
+    "name": "An unknown command type is rejected",
+    "before": { "blocks": [], "dependencies": [] },
+    "command": { "type": "Teleport" },
+    "rejected": "INVALID_COMMAND"
+  }
+]

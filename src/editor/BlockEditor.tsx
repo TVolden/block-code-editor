@@ -16,6 +16,11 @@ import type {
   BlockDefinition, ParamType, PlacedBlock, ParamSlot, SerializedCanvas, PackageRef, CatalogPackage, PackageAction,
 } from '../types';
 import { DEPENDENCY_PREFIX, dependencyPackageId, packageKey } from '../utils/packages';
+import type { CanvasState, Command, Place } from '../commands/types';
+import { CommandRejected } from '../commands/types';
+import { applyCommand, fragmentOf, normalizeBlock } from '../commands/apply';
+import { invertCommand } from '../commands/invert';
+import { changeDependencies, deleteChain, moveChain, placeNewBlock, setSocketText } from '../commands/build';
 export type { SerializedCanvas, BlockDefinition } from '../types';
 export { default as CardDesigner } from '../carddesigner/CardDesigner';
 export { default as CardPreview } from '../carddesigner/CardPreview';
@@ -39,6 +44,7 @@ import { MouthDecorations } from '../components/MouthDecorations';
 import Canvas from '../components/Canvas';
 import { BlockRenderer } from '../components/BlockRenderer';
 import ThemeSwitcher from '../components/ThemeSwitcher';
+import UndoRedoBar from '../components/UndoRedoBar';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -101,8 +107,7 @@ interface DragState {
   type: 'palette' | 'canvas';
   defId: string;           // block definition being dragged
   instanceId?: string;     // canvas block being dragged (canvas drags only)
-  carriedIds?: string[];   // this block + all chained blocks below it
-  detachAt?: { x: number; y: number };  // where the block is drawn; it becomes a root there once dragged
+  carriedIds?: string[];   // this block + all chained blocks below it (still linked: a drag changes no state)
   offsetX: number;         // cursor offset from block's top-left corner
   offsetY: number;
   startClientX: number;    // initial pointer position (detect click vs drag)
@@ -110,33 +115,17 @@ interface DragState {
   moved: boolean;          // true once pointer has moved far enough
 }
 
-// ── Module-level counter ─────────────────────────────────────────────────────
-
-let nextBlockId = 1;
-function makeId() { return `b${nextBlockId++}`; }
-
 // ── Helper functions ─────────────────────────────────────────────────────────
 
-/**
- * Collects IDs of a set of blocks and everything they hold: the query blocks
- * embedded in their param slots and the whole chains in their mouths (and so
- * on down the tree). Pure — does not mutate.
- */
-function gatherWithDescendants(ids: string[], blocks: Map<string, PlacedBlock>): string[] {
-  const result: string[] = [];
-  const seen = new Set<string>();
-  const queue = [...ids];
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    result.push(id);
-    blocks.get(id)?.paramSlots.forEach(slot => {
-      if (slot.queryBlockId) queue.push(slot.queryBlockId);
-      if (slot.commandBlockId) queue.push(...collectChain(slot.commandBlockId, blocks));
-    });
-  }
-  return result;
+/** A new block id: random, so blocks made by different clients never collide. Ids are opaque strings. */
+function newBlockId(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  // randomUUID needs a secure context; fall back to the same format from random bytes.
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 /** Whether the block is the first block of a mouth's chain (rather than a query in a socket). */
@@ -146,120 +135,14 @@ function isMouthHead(block: PlacedBlock, blocks: Map<string, PlacedBlock>): bool
   return host?.paramSlots[block.embeddedSlotIndex]?.commandBlockId === block.instanceId;
 }
 
-/** Sets a slot of a block in the map. Mutates `blocks`, which must be a copy. */
-function setSlot(blocks: Map<string, PlacedBlock>, blockId: string, slotIndex: number, slot: ParamSlot) {
-  const block = blocks.get(blockId);
-  if (!block) return;
-  const slots = [...block.paramSlots];
-  slots[slotIndex] = slot;
-  blocks.set(blockId, { ...block, paramSlots: slots });
-}
-
-/**
- * Returns a new canvas map with all orphaned blocks removed — blocks whose
- * definition is no longer registered (e.g. a collection query block whose
- * collection was renamed or deleted, or a block of a removed package).
- * Repairs command chains around removed blocks, also in mouths.
- */
-function withOrphansRemoved(blocks: Map<string, PlacedBlock>): Map<string, PlacedBlock> {
-  const orphanIds: string[] = [];
-  blocks.forEach((block) => {
-    if (!tryGetDefinition(block.definitionId)) orphanIds.push(block.instanceId);
-  });
-  if (orphanIds.length === 0) return blocks;
-
-  const next = new Map(blocks);
-  // Everything an orphan holds goes with it; nothing in there needs repairing.
-  const allToRemove = new Set(gatherWithDescendants(orphanIds, blocks));
-
-  for (const orphanId of orphanIds) {
-    const orphan = next.get(orphanId);
-    if (!orphan) continue;
-    const child = orphan.nextBlockId ? next.get(orphan.nextBlockId) : undefined;
-
-    if (isMouthHead(orphan, next)) {
-      // The mouth now starts at the orphan's successor (or is empty).
-      const host = next.get(orphan.embeddedInBlockId!)!;
-      setSlot(next, host.instanceId, orphan.embeddedSlotIndex,
-        { ...host.paramSlots[orphan.embeddedSlotIndex], commandBlockId: child?.instanceId ?? null });
-      if (child) next.set(child.instanceId, {
-        ...child, parentBlockId: null,
-        embeddedInBlockId: orphan.embeddedInBlockId, embeddedSlotIndex: orphan.embeddedSlotIndex,
-      });
-    } else if (orphan.embeddedInBlockId && orphan.embeddedSlotIndex >= 0) {
-      // Clear the socket in the parent block that was holding this query block.
-      setSlot(next, orphan.embeddedInBlockId, orphan.embeddedSlotIndex, { textValue: null, queryBlockId: null });
-    } else if (orphan.parentBlockId) {
-      // Stitch command chain past this block so downstream blocks aren't stranded.
-      const parent = next.get(orphan.parentBlockId);
-      if (parent) next.set(parent.instanceId, { ...parent, nextBlockId: child?.instanceId ?? null });
-      if (child) next.set(child.instanceId, { ...child, parentBlockId: orphan.parentBlockId });
-    } else if (child) {
-      // A removed root: its successor becomes the root, where the orphan was.
-      next.set(child.instanceId, { ...child, parentBlockId: null, x: orphan.x, y: orphan.y });
-    }
-  }
-
-  allToRemove.forEach(id => next.delete(id));
-  return next;
-}
-
-/**
- * Returns a new canvas map with the block made a root at (x, y): its socket or mouth emptied, or the chain above it
- * cut. The blocks after it (and everything it holds) stay with it. Pure — does not mutate the input.
- */
-function detached(blocks: Map<string, PlacedBlock>, instanceId: string, x: number, y: number): Map<string, PlacedBlock> {
-  const block = blocks.get(instanceId);
-  if (!block || (!block.embeddedInBlockId && !block.parentBlockId)) return blocks;
-  const next = new Map(blocks);
-  if (block.embeddedInBlockId) {
-    const slot = next.get(block.embeddedInBlockId)?.paramSlots[block.embeddedSlotIndex];
-    if (slot) {
-      setSlot(next, block.embeddedInBlockId, block.embeddedSlotIndex, isMouthHead(block, next)
-        ? { ...slot, commandBlockId: null }
-        : { ...slot, textValue: null, queryBlockId: null });
-    }
-  }
-  if (block.parentBlockId) {
-    const parent = next.get(block.parentBlockId);
-    if (parent) next.set(parent.instanceId, { ...parent, nextBlockId: null });
-  }
-  next.set(instanceId, { ...block, x, y, parentBlockId: null, embeddedInBlockId: null, embeddedSlotIndex: -1 });
-  return next;
-}
-
 /** Where a carried chain can attach: under a chain's last block, or at the top of a mouth. */
 type ChainSnap =
   | { kind: 'next';  blockId: string; snapX: number; snapY: number; dist: number }
   | { kind: 'mouth'; blockId: string; slotIndex: number; snapX: number; snapY: number; dist: number };
 
-/**
- * Attaches the root chain from `leadId` to `tailId` at the snap target and moves its lead there. At the top of an
- * occupied mouth, the mouth's old chain follows the carried chain's tail. Mutates `blocks`, which must be a copy.
- */
-function attachChain(blocks: Map<string, PlacedBlock>, leadId: string, tailId: string, snap: ChainSnap) {
-  const lead = blocks.get(leadId)!;
-  if (snap.kind === 'next') {
-    const parent = blocks.get(snap.blockId)!;
-    blocks.set(snap.blockId, { ...parent, nextBlockId: leadId });
-    blocks.set(leadId, { ...lead, x: snap.snapX, y: snap.snapY, parentBlockId: snap.blockId });
-    return;
-  }
-  const host = blocks.get(snap.blockId)!;
-  const slot = host.paramSlots[snap.slotIndex];
-  const oldHeadId = slot?.commandBlockId ?? null;
-  setSlot(blocks, snap.blockId, snap.slotIndex, slot
-    ? { ...slot, commandBlockId: leadId }
-    : { textValue: null, queryBlockId: null, commandBlockId: leadId });
-  blocks.set(leadId, {
-    ...lead, x: snap.snapX, y: snap.snapY, parentBlockId: null,
-    embeddedInBlockId: snap.blockId, embeddedSlotIndex: snap.slotIndex,
-  });
-  const oldHead = oldHeadId ? blocks.get(oldHeadId) : undefined;
-  if (oldHead) {
-    blocks.set(oldHead.instanceId, { ...oldHead, parentBlockId: tailId, embeddedInBlockId: null, embeddedSlotIndex: -1 });
-    blocks.set(tailId, { ...blocks.get(tailId)!, nextBlockId: oldHead.instanceId });
-  }
+/** The command place of a snap target. */
+function snapPlace(snap: ChainSnap): Place {
+  return snap.kind === 'next' ? { next: snap.blockId } : { mouth: snap.blockId, slot: snap.slotIndex };
 }
 
 /**
@@ -297,18 +180,18 @@ function countBlocksByPackage(blocks: Map<string, PlacedBlock>): Map<string, num
   return counts;
 }
 
-/** Creates a fresh PlacedBlock with empty parameter slots. */
+/** Creates a fresh root block with empty parameter slots. */
 function createBlock(defId: string, x: number, y: number): PlacedBlock {
   const def = getDefinition(defId);
   return {
-    instanceId: makeId(),
+    instanceId: newBlockId(),
     definitionId: defId,
     x, y,
     nextBlockId: null,
     parentBlockId: null,
     embeddedInBlockId: null,
     embeddedSlotIndex: -1,
-    paramSlots: def.params.map((): ParamSlot => ({ textValue: null, queryBlockId: null })),
+    paramSlots: def.params.map((): ParamSlot => ({ textValue: null, queryBlockId: null, commandBlockId: null })),
   };
 }
 
@@ -357,35 +240,6 @@ function formatOutputLine(block: PlacedBlock, blocks: Map<string, PlacedBlock>):
     return '_';
   });
   return `${def.id}(${args.join(', ')})`;
-}
-
-/**
- * Returns a new canvas map with the given carried block IDs (and all query
- * blocks embedded in their slots) deleted. Pure — does not mutate the input.
- */
-function deleteCarried(blocks: Map<string, PlacedBlock>, carriedIds: string[]): Map<string, PlacedBlock> {
-  const next = new Map(blocks);
-  gatherWithDescendants(carriedIds, blocks).forEach(id => next.delete(id));
-  return next;
-}
-
-/**
- * Returns a new canvas map with the text value of a socket updated.
- * Pure — does not mutate the input.
- */
-function commitSocketText(
-  blocks: Map<string, PlacedBlock>,
-  blockId: string,
-  slotIndex: number,
-  value: string,
-): Map<string, PlacedBlock> {
-  const block = blocks.get(blockId);
-  if (!block) return blocks;
-  const slots = [...block.paramSlots];
-  slots[slotIndex] = { ...slots[slotIndex], textValue: value || null };
-  const next = new Map(blocks);
-  next.set(blockId, { ...block, paramSlots: slots });
-  return next;
 }
 
 // ── DragGhost ─────────────────────────────────────────────────────────────────
@@ -470,16 +324,93 @@ export default function BlockEditor({
   const [ready, setReady]         = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [blocks, setBlocks]             = useState<Map<string, PlacedBlock>>(() => {
-    if (!initialState) return new Map();
-    const map = new Map(initialState.blocks);
-    // Advance the ID counter past any restored block IDs to avoid collisions
-    map.forEach((_b, id) => {
-      const n = parseInt(id.slice(1), 10);
-      if (!isNaN(n) && n >= nextBlockId) nextBlockId = n + 1;
-    });
-    return map;
-  });
+  // ── Canvas state: changed only by applying commands ─────────────────────────
+
+  const [canvas, setCanvas] = useState<CanvasState>(() => ({
+    blocks: new Map((initialState?.blocks ?? []).map(([id, block]) => [id, normalizeBlock(block)])),
+    dependencies: dependencies ?? [],
+  }));
+  const blocks = canvas.blocks;
+  // The latest state for handlers (several commands can be applied before React re-renders).
+  const stateRef = useRef(canvas);
+  useEffect(() => { stateRef.current = canvas; });
+
+  // A host change of the dependencies (not one the editor reported) replaces them, without a history step.
+  const dependenciesPropKey = (dependencies ?? []).map(dependencyPackageId).join('|');
+  const [seenDependenciesPropKey, setSeenDependenciesPropKey] = useState(dependenciesPropKey);
+  if (dependenciesPropKey !== seenDependenciesPropKey) {
+    setSeenDependenciesPropKey(dependenciesPropKey);
+    if (dependenciesPropKey !== canvas.dependencies.map(dependencyPackageId).join('|')) {
+      setCanvas(c => ({ ...c, dependencies: dependencies ?? [] }));
+    }
+  }
+
+  const onDependenciesChangeRef = useRef(onDependenciesChange);
+  useEffect(() => { onDependenciesChangeRef.current = onDependenciesChange; });
+
+  const [notice, setNotice] = useState<string | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showNotice = useCallback((text: string) => {
+    setNotice(text);
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(null), 4000);
+  }, []);
+
+  /** Applies a command to the state; false (and the state unchanged) when it is rejected. */
+  const commit = useCallback((command: Command): boolean => {
+    const previous = stateRef.current;
+    let next: CanvasState;
+    try {
+      next = applyCommand(previous, command);
+    } catch (err) {
+      if (err instanceof CommandRejected) return false;
+      throw err;
+    }
+    stateRef.current = next;
+    setCanvas(next);
+    if (next.dependencies !== previous.dependencies) onDependenciesChangeRef.current?.(next.dependencies);
+    return true;
+  }, []);
+
+  // Undo/redo: the user actions applied in this session.
+  const [history, setHistory] = useState<{ undo: Command[]; redo: Command[] }>({ undo: [], redo: [] });
+
+  /** A user action: applied and recorded for undo. Nothing for null (an action that changes nothing). */
+  const perform = useCallback((command: Command | null) => {
+    if (!command) return;
+    if (commit(command)) setHistory(h => ({ undo: [...h.undo, command], redo: [] }));
+    else showNotice("That change couldn't be made: the canvas has changed.");
+  }, [commit, showNotice]);
+
+  const undo = useCallback(() => {
+    const command = history.undo[history.undo.length - 1];
+    if (!command) return;
+    const undone = commit(invertCommand(command));
+    setHistory(h => ({ undo: h.undo.slice(0, -1), redo: undone ? [...h.redo, command] : h.redo }));
+    if (!undone) showNotice("Couldn't undo: the canvas has changed since.");
+  }, [history, commit, showNotice]);
+
+  const redo = useCallback(() => {
+    const command = history.redo[history.redo.length - 1];
+    if (!command) return;
+    const redone = commit(command);
+    setHistory(h => ({ undo: redone ? [...h.undo, command] : h.undo, redo: h.redo.slice(0, -1) }));
+    if (!redone) showNotice("Couldn't redo: the canvas has changed since.");
+  }, [history, commit, showNotice]);
+
+  // Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z and Ctrl+Y, except while typing in a field.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
+      else if ((key === 'z' && e.shiftKey) || (key === 'y' && !e.metaKey)) { e.preventDefault(); redo(); }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [undo, redo]);
   // Which "start" block definition IDs are already placed on the canvas.
   // Used to enforce one-instance-per-event-type.
   const placedStartIds = useMemo(() => {
@@ -517,22 +448,24 @@ export default function BlockEditor({
   const resolvedUrls = blocksUrls ?? [blocksUrl];
   const resolvedUrlsKey = resolvedUrls.join('|');
 
-  // The latest dependencies, for the loaders below (which run on the registry one after the other, see loadQueue).
-  const dependenciesRef     = useRef(dependencies);
+  // The latest dependencies (the canvas's: they change by commands), for the loaders below (which run on the registry
+  // one after the other, see loadQueue). Without the dependencies prop the editor maintains no packages.
+  const maintainsPackages   = dependencies !== undefined;
+  const dependenciesRef     = useRef<PackageRef[] | undefined>(maintainsPackages ? canvas.dependencies : undefined);
   const packageBlocksUrlRef = useRef(packageBlocksUrl);
   useEffect(() => {
-    dependenciesRef.current     = dependencies;
+    dependenciesRef.current     = maintainsPackages ? canvas.dependencies : undefined;
     packageBlocksUrlRef.current = packageBlocksUrl;
   });
-  const dependenciesKey = (dependencies ?? []).map(dependencyPackageId).join('|');
+  const dependenciesKey = canvas.dependencies.map(dependencyPackageId).join('|');
 
   // Loads change the module-level registry, so they run one after another.
   const loadQueue = useRef<Promise<void>>(Promise.resolve());
 
-  // The core set, then the dependencies; the editor is ready (and cleans up orphans) only once all are in.
+  // The core set, then the dependencies; the editor is ready only once all are in.
   // A run whose effect was cleaned up (StrictMode's double run in development, or new URLs) does nothing more: a later
-  // run clears and reloads the registry, and must not find a stale run marking the editor ready (which removes every
-  // block without a definition) while it is still loading.
+  // run clears and reloads the registry, and must not find a stale run marking the editor ready while it is still
+  // loading.
   useEffect(() => {
     let cancelled = false;
     const urls = resolvedUrlsKey.split('|');
@@ -565,9 +498,10 @@ export default function BlockEditor({
     return () => { cancelled = true; };
   }, [resolvedUrlsKey]);
 
-  // A change of dependencies once ready: load and unload only what changed, then remove the blocks whose definitions
-  // went (after the loads, so a version update keeps the blocks its new version still has). A run whose effect was
-  // cleaned up before its turn is skipped: the next run syncs to the latest dependencies anyway.
+  // A change of dependencies once ready: load and unload only what changed. Blocks are never removed here: removing a
+  // package removes its blocks in the same user action (changeDependencies), and blocks whose definitions are missing
+  // otherwise stay as placeholders. A run whose effect was cleaned up before its turn is skipped: the next run syncs to
+  // the latest dependencies anyway.
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
@@ -578,7 +512,6 @@ export default function BlockEditor({
         if (!changed) return;
         setLoadedPackages(getLoadedPackages());
         setRegistryVersion(v => v + 1);
-        setBlocks(prev => withOrphansRemoved(prev));
       } catch (err) {
         setLoadError(String(err));
       }
@@ -599,9 +532,7 @@ export default function BlockEditor({
     }
     setLoadedPackages(getLoadedPackages());
     setRegistryVersion(v => v + 1);
-    // Auto-correct: remove any canvas blocks whose definition is no longer in
-    // the registry (e.g. a collection block whose collection was renamed/deleted).
-    setBlocks(prev => withOrphansRemoved(prev));
+    // Blocks whose definition went (e.g. a renamed collection) stay as placeholders until the user deletes them.
   }, [additionalBlocks, ready]);
 
   // ── Coordinate helpers ───────────────────────────────────────────────────────
@@ -616,9 +547,10 @@ export default function BlockEditor({
   /**
    * Where a chain led by a block of `leadDefId`, dropped with its top-left at (svgX, svgY), attaches: under the last
    * block of any chain (also in a mouth), or at the top of a mouth, empty or not. Only command chains attach.
-   * `exclude` holds the carried blocks and everything they hold, so a chain never snaps into itself.
+   * `exclude` holds the carried blocks and everything they hold, so a chain never snaps into itself. A drag changes no
+   * state, so the place the carried lead (`leadId`) still occupies counts as free: dropping it back is a no-op.
    */
-  const findSnapTarget = useCallback((svgX: number, svgY: number, leadDefId: string, exclude: Set<string>): ChainSnap | null => {
+  const findSnapTarget = useCallback((svgX: number, svgY: number, leadDefId: string, leadId: string | null, exclude: Set<string>): ChainSnap | null => {
     const SNAP_DISTANCE = 24;
     // Only a command has an inlet: a start block never attaches under anything.
     if (tryGetDefinition(leadDefId)?.blockType !== 'command') return null;
@@ -636,7 +568,7 @@ export default function BlockEditor({
       const def = tryGetDefinition(block.definitionId);
       const pos = layout.get(block.instanceId);
       if (!def || def.blockType === 'query' || !pos) return;
-      if (!block.nextBlockId) {
+      if (!block.nextBlockId || block.nextBlockId === leadId) {
         const bottom = pos.y + getBlockHeight(def, block.paramSlots, blocks);
         const dist = distanceTo(pos.x, bottom);
         if (dist !== null) consider({ kind: 'next', blockId: block.instanceId, snapX: pos.x, snapY: bottom, dist });
@@ -651,7 +583,8 @@ export default function BlockEditor({
     return best;
   }, [blocks, layout]);
 
-  const findSocketSnap = useCallback((svgX: number, svgY: number, defId: string, exclude: Set<string>): SockResult | null => {
+  /** Where a query dropped with its top-left at (svgX, svgY) fits a socket; the socket the dragged query (`leadId`) is in counts as free. */
+  const findSocketSnap = useCallback((svgX: number, svgY: number, defId: string, leadId: string | null, exclude: Set<string>): SockResult | null => {
     const draggedDef = tryGetDefinition(defId);
     if (!draggedDef || draggedDef.blockType !== 'query') return null;
     const SNAP_DISTANCE = 20;
@@ -664,7 +597,8 @@ export default function BlockEditor({
       const sockets  = getSocketPositions(blockDef, block.paramSlots, blocks);
       sockets.forEach((socket) => {
         if (!fitsSocket(draggedDef, socket.type)) return;
-        if (block.paramSlots[socket.index]?.queryBlockId) return;
+        const occupant = block.paramSlots[socket.index]?.queryBlockId;
+        if (occupant && occupant !== leadId) return;
         const centerX = pos.x + socket.x + socket.w / 2;
         const centerY = pos.y + socket.y + socket.h / 2;
         const dx = Math.abs(svgX + socket.w / 2 - centerX);
@@ -701,10 +635,24 @@ export default function BlockEditor({
 
   const handleSocketCommit = useCallback((blockId: string, slotIndex: number, value: string) => {
     setEditingSocket(null);
-    setBlocks(prev => commitSocketText(prev, blockId, slotIndex, value));
-  }, []);
+    perform(setSocketText(stateRef.current, blockId, slotIndex, value));
+  }, [perform]);
 
   const handleSocketCancelEdit = useCallback(() => setEditingSocket(null), []);
+
+  /**
+   * The Packages tab changed the dependencies: one user action that also removes the blocks of removed packages
+   * (a version update keeps the blocks; its blocks are loaded from the new version).
+   */
+  const handleDependenciesChange = useCallback((to: PackageRef[]) => {
+    const state = stateRef.current;
+    const kept = new Set(to.map(packageKey));
+    const removedPackageIds = new Set(state.dependencies.filter(d => !kept.has(packageKey(d))).map(dependencyPackageId));
+    const removedIds = [...state.blocks.values()]
+      .filter(block => removedPackageIds.has(getBlockPackageId(block.definitionId) ?? ''))
+      .map(block => block.instanceId);
+    perform(changeDependencies(state, to, removedIds));
+  }, [perform]);
 
   const changeTheme = useCallback((t: Theme) => {
     setTheme(t);
@@ -743,14 +691,15 @@ export default function BlockEditor({
     // A query is dragged alone; any other block takes the blocks below it along (out of a mouth too).
     const chain = def?.blockType === 'query' ? [instanceId] : collectChain(instanceId, blocks);
 
-    // The block is detached once the pointer moves (a click leaves it where it is).
+    // Nothing changes until the drop: the chain stays where it is (faded) while its ghost follows the pointer.
     dragRef.current = {
       type: 'canvas', defId: block.definitionId, instanceId,
-      carriedIds: chain, detachAt: { x: blockX, y: blockY }, offsetX, offsetY,
+      carriedIds: chain, offsetX, offsetY,
       startClientX: e.clientX, startClientY: e.clientY,
       moved: false,
     };
-    setDraggingIds(new Set(chain));
+    // The lead is faded; the blocks hanging off it are drawn inside it and fade with it.
+    setDraggingIds(new Set([instanceId]));
     setGhostPos({ x: e.clientX - offsetX, y: e.clientY - offsetY, defId: block.definitionId });
     (e.target as Element).setPointerCapture(e.pointerId);
   }, [blocks, layout, toSVG]);
@@ -763,8 +712,6 @@ export default function BlockEditor({
       if (!drag) return;
       if (!drag.moved && (Math.abs(e.clientX - drag.startClientX) > 4 || Math.abs(e.clientY - drag.startClientY) > 4)) {
         drag.moved = true;
-        const { instanceId, detachAt } = drag;
-        if (instanceId && detachAt) setBlocks(prev => detached(prev, instanceId, detachAt.x, detachAt.y));
       }
       if (!drag.moved) return;
       setGhostPos({ x: e.clientX - drag.offsetX, y: e.clientY - drag.offsetY, defId: drag.defId });
@@ -792,88 +739,43 @@ export default function BlockEditor({
       const canvasRect = canvasRef.current?.getBoundingClientRect();
       if (!canvasRect) return;
 
+      const state = stateRef.current;
+
       // ── Delete: canvas block dropped over the palette ────────────────────────
       if (drag.type === 'canvas' && e.clientX < canvasRect.left) {
-        setBlocks(prev => deleteCarried(prev, drag.carriedIds!));
+        perform(deleteChain(state, drag.instanceId!));
         return;
       }
 
       const dropX = e.clientX - drag.offsetX - canvasRect.left;
       const dropY = e.clientY - drag.offsetY - canvasRect.top;
       const def   = getDefinition(drag.defId);
+      const leadId = drag.type === 'canvas' ? drag.instanceId! : null;
+      // Never snap into the carried blocks or anything they hold.
+      const carried = new Set(leadId ? fragmentOf(state.blocks, leadId) : []);
+
+      let place: Place | null = null;
+      if (def.blockType === 'query') {
+        const socketSnap = findSocketSnap(dropX, dropY, drag.defId, leadId, carried);
+        if (socketSnap) place = { socket: socketSnap.blockId, slot: socketSnap.slotIndex };
+      } else {
+        const snap = findSnapTarget(dropX, dropY, drag.defId, leadId, carried);
+        if (snap) place = snapPlace(snap);
+      }
 
       if (drag.type === 'palette') {
         if (e.clientX < canvasRect.left || e.clientX > canvasRect.right ||
             e.clientY < canvasRect.top  || e.clientY > canvasRect.bottom) return;
 
         // Enforce one instance per event (start) block.
-        if (def?.blockType === 'start') {
-          const alreadyPlaced = [...blocks.values()].some(block => block.definitionId === drag.defId);
+        if (def.blockType === 'start') {
+          const alreadyPlaced = [...state.blocks.values()].some(block => block.definitionId === drag.defId);
           if (alreadyPlaced) return;
         }
 
-        const newBlock = createBlock(drag.defId, dropX, dropY);
-
-        if (def.blockType !== 'query') {
-          const snap = findSnapTarget(dropX, dropY, drag.defId, new Set());
-          if (snap) {
-            setBlocks(prev => {
-              const next = new Map(prev);
-              next.set(newBlock.instanceId, newBlock);
-              attachChain(next, newBlock.instanceId, newBlock.instanceId, snap);
-              return next;
-            });
-            return;
-          }
-        } else {
-          const socketSnap = findSocketSnap(dropX, dropY, drag.defId, new Set());
-          if (socketSnap) {
-            const { blockId: parentId, slotIndex, snapX, snapY } = socketSnap;
-            newBlock.x = snapX; newBlock.y = snapY;
-            newBlock.embeddedInBlockId = parentId; newBlock.embeddedSlotIndex = slotIndex;
-            setBlocks(prev => {
-              const next = new Map(prev);
-              const parent = next.get(parentId)!;
-              const slots = [...parent.paramSlots];
-              slots[slotIndex] = { textValue: null, queryBlockId: newBlock.instanceId };
-              next.set(parentId, { ...parent, paramSlots: slots });
-              next.set(newBlock.instanceId, newBlock);
-              return next;
-            });
-            return;
-          }
-        }
-        setBlocks(prev => { const next = new Map(prev); next.set(newBlock.instanceId, newBlock); return next; });
-
+        perform(placeNewBlock(state, createBlock(drag.defId, dropX, dropY), { x: dropX, y: dropY }, place));
       } else {
-        const leadId = drag.instanceId!;
-        setBlocks(prev => {
-          const next = new Map(prev);
-          const lead = next.get(leadId);
-          if (!lead) return prev;
-
-          // The carried blocks hang off the lead (a root since pointer-down), so moving it moves them all.
-          next.set(leadId, { ...lead, x: dropX, y: dropY });
-          // Never snap into the carried chain or anything it holds.
-          const carried = new Set(gatherWithDescendants(drag.carriedIds!, next));
-
-          if (def.blockType !== 'query') {
-            const snap = findSnapTarget(dropX, dropY, drag.defId, carried);
-            if (snap) attachChain(next, leadId, drag.carriedIds![drag.carriedIds!.length - 1], snap);
-          } else {
-            const socketSnap = findSocketSnap(dropX, dropY, drag.defId, carried);
-            if (socketSnap) {
-              const { blockId: parentId, slotIndex, snapX, snapY } = socketSnap;
-              const block = next.get(leadId)!;
-              next.set(leadId, { ...block, x: snapX, y: snapY, embeddedInBlockId: parentId, embeddedSlotIndex: slotIndex });
-              const parent = next.get(parentId)!;
-              const slots = [...parent.paramSlots];
-              slots[slotIndex] = { textValue: null, queryBlockId: leadId };
-              next.set(parentId, { ...parent, paramSlots: slots });
-            }
-          }
-          return next;
-        });
+        perform(moveChain(state, leadId!, { x: dropX, y: dropY }, place));
       }
     }
 
@@ -883,7 +785,7 @@ export default function BlockEditor({
       document.removeEventListener('pointermove', onPointerMove);
       document.removeEventListener('pointerup', onPointerUp);
     };
-  }, [blocks, findSnapTarget, findSocketSnap]);
+  }, [findSnapTarget, findSocketSnap, perform]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -957,10 +859,10 @@ export default function BlockEditor({
           onPointerDown={handlePalettePointerDown}
           isDropTarget={isOverPalette}
           registryVersion={registryVersion}
-          packages={dependencies && onDependenciesChange ? {
+          packages={maintainsPackages && onDependenciesChange ? {
             available:      availablePackages ?? [],
-            dependencies,
-            onChange:       onDependenciesChange,
+            dependencies:   canvas.dependencies,
+            onChange:       handleDependenciesChange,
             actions:        packageActions,
             blockCounts:    countBlocksByPackage(blocks),
             conflictCounts: new Map(loadedPackages
@@ -969,18 +871,27 @@ export default function BlockEditor({
           } : undefined}
           placedStartIds={placedStartIds}
         />
-        <Canvas
-          ref={canvasRef}
-          blocks={blocks}
-          draggingIds={draggingIds}
-          onBlockPointerDown={handleBlockPointerDown}
-          onBlockClick={handleBlockClick}
-          onSocketClick={handleSocketClick}
-          editingSocket={editingSocket}
-          onSocketCommit={handleSocketCommit}
-          onSocketCancelEdit={handleSocketCancelEdit}
-          onOutputDrag={handlePalettePointerDown}
-        />
+        <div style={{ flex: 1, minWidth: 0, display: 'flex', position: 'relative' }}>
+          <Canvas
+            ref={canvasRef}
+            blocks={blocks}
+            draggingIds={draggingIds}
+            onBlockPointerDown={handleBlockPointerDown}
+            onBlockClick={handleBlockClick}
+            onSocketClick={handleSocketClick}
+            editingSocket={editingSocket}
+            onSocketCommit={handleSocketCommit}
+            onSocketCancelEdit={handleSocketCancelEdit}
+            onOutputDrag={handlePalettePointerDown}
+          />
+          <UndoRedoBar
+            canUndo={history.undo.length > 0}
+            canRedo={history.redo.length > 0}
+            onUndo={undo}
+            onRedo={redo}
+            notice={notice}
+          />
+        </div>
       </div>
       <DragGhost ghostPos={ghostPos} dragRef={dragRef} blocks={blocks} />
     </div>
