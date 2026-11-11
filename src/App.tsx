@@ -1,19 +1,21 @@
 import { useState, useMemo } from 'react';
 import BlockEditor from './editor/BlockEditor';
 import Console from './components/Console';
-import CardDesigner from './carddesigner/CardDesigner';
 import { ThemeContext } from './ThemeContext';
 import { darkTheme, THEMES } from './theme';
 import type { Theme } from './theme';
 import type { PackageRef } from './types';
 import { DEMO_PACKAGES, demoPackageBlocksUrl } from './demoPackages';
+import { pythonWriter } from './demo/pythonWriter';
+import MultiplayerDemo from './demo/MultiplayerDemo';
+import { readSetting, writeSetting } from './utils/storage';
 import './App.css';
 
-type Page = 'block-editor' | 'card-designer';
+type Page = 'block-editor' | 'multiplayer';
 
 const PAGES: { id: Page; label: string }[] = [
-  { id: 'block-editor',  label: 'Behavior Editor' },
-  { id: 'card-designer', label: 'Card Designer'   },
+  { id: 'block-editor', label: 'Behavior Editor'  },
+  { id: 'multiplayer',  label: 'Multiplayer Demo' },
 ];
 
 export default function App() {
@@ -22,7 +24,7 @@ export default function App() {
   const [dependencies, setDependencies] = useState<PackageRef[]>([]);
 
   const [theme, setTheme] = useState<Theme>(() => {
-    const saved = localStorage.getItem('cardcq-theme');
+    const saved = readSetting('cardcq-theme');
     return THEMES.find(t => t.id === saved) ?? darkTheme;
   });
 
@@ -31,7 +33,7 @@ export default function App() {
   }
 
   function handleThemeChange(t: Theme) {
-    localStorage.setItem('cardcq-theme', t.id);
+    writeSetting('cardcq-theme', t.id);
     setTheme(t);
   }
 
@@ -67,6 +69,7 @@ export default function App() {
               onDependenciesChange={setDependencies}
               packageBlocksUrl={demoPackageBlocksUrl}
               availablePackages={DEMO_PACKAGES}
+              scriptWriters={[pythonWriter]}
               onRun={handleRun}
               onThemeChange={handleThemeChange}
               navTabs={navTabs}
@@ -75,9 +78,7 @@ export default function App() {
           </div>
         )}
 
-        {page === 'card-designer' && (
-          <CardDesigner onThemeChange={handleThemeChange} navTabs={navTabs} />
-        )}
+        {page === 'multiplayer' && <MultiplayerDemo navTabs={navTabs} />}
 
       </div>
     </ThemeContext.Provider>

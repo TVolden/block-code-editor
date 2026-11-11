@@ -6,18 +6,24 @@ import { useTheme } from '../ThemeContext';
 interface Props {
   blocks: Map<string, PlacedBlock>;
   draggingIds: Set<string>;
+  /** Blocks changed by actions still waiting for the host's confirmation: drawn provisionally. */
+  provisionalIds?: Set<string>;
   onBlockPointerDown: (e: React.PointerEvent, id: string) => void;
   onBlockClick: (id: string) => void;
   onSocketClick: (blockId: string, slotIndex: number) => void;
   editingSocket?: { blockId: string; slotIndex: number } | null;
+  /** The text of the socket being typed into, on every keystroke. */
+  onSocketInput?: (blockId: string, slotIndex: number, text: string) => void;
   onSocketCommit?: (blockId: string, slotIndex: number, value: string) => void;
   onSocketCancelEdit?: () => void;
   onOutputDrag: (e: React.PointerEvent, defId: string) => void;
+  /** Drawn over the blocks (e.g. other users' cursors). */
+  overlay?: React.ReactNode;
 }
 
 const Canvas = forwardRef<SVGSVGElement, Props>(
-  ({ blocks, draggingIds, onBlockPointerDown, onBlockClick, onSocketClick,
-     editingSocket, onSocketCommit, onSocketCancelEdit, onOutputDrag }, ref) => {
+  ({ blocks, draggingIds, provisionalIds, onBlockPointerDown, onBlockClick, onSocketClick,
+     editingSocket, onSocketInput, onSocketCommit, onSocketCancelEdit, onOutputDrag, overlay }, ref) => {
     const theme = useTheme();
     // Only roots: each draws the blocks chained under it, embedded in its sockets and held in its mouths.
     const rootBlocks = [...blocks.values()].filter(b => !b.embeddedInBlockId && !b.parentBlockId);
@@ -46,12 +52,15 @@ const Canvas = forwardRef<SVGSVGElement, Props>(
             onBlockClick={onBlockClick}
             onSocketClick={onSocketClick}
             draggingIds={draggingIds}
+            provisionalIds={provisionalIds}
             editingSocket={editingSocket}
+            onSocketInput={onSocketInput}
             onSocketCommit={onSocketCommit}
             onSocketCancelEdit={onSocketCancelEdit}
             onOutputDrag={onOutputDrag}
           />
         ))}
+        {overlay}
       </svg>
     );
   }

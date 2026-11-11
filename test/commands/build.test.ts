@@ -99,9 +99,14 @@ describe('deleteChain', () => {
 
 describe('setSocketText', () => {
   it('sets text, and changes nothing when the value is the same (empty is no text)', () => {
-    const after = perform(sample(), setSocketText(sample(), 'b', 0, '4'));
+    const after = perform(sample(), setSocketText('b', 0, null, '4'));
     expect(get(after, 'b').paramSlots[0].textValue).toBe('4');
-    expect(setSocketText(sample(), 'b', 0, '')).toBeNull();
+    expect(setSocketText('b', 0, null, '')).toBeNull();
+  });
+
+  it('is rejected when the text changed since editing started', () => {
+    const changed = applyCommand(sample(), { type: 'SetText', blockId: 'b', slot: 0, from: null, to: '2' });
+    expect(() => applyCommand(changed, setSocketText('b', 0, null, '4')!)).toThrow(/changed/);
   });
 });
 

@@ -2,12 +2,14 @@ import type React from 'react';
 import { useTheme } from '../ThemeContext';
 
 /** Undo and redo buttons over the canvas's top-right corner, with a short notice (e.g. a step that couldn't be undone). */
-export default function UndoRedoBar({ canUndo, canRedo, onUndo, onRedo, notice }: {
+export default function UndoRedoBar({ canUndo, canRedo, onUndo, onRedo, notice, extra }: {
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
   notice: string | null;
+  /** More controls before the buttons (e.g. the Export menu). */
+  extra?: React.ReactNode;
 }) {
   const theme = useTheme();
   const button = (enabled: boolean): React.CSSProperties => ({
@@ -26,6 +28,7 @@ export default function UndoRedoBar({ canUndo, canRedo, onUndo, onRedo, notice }
           {notice}
         </span>
       )}
+      {extra && <div style={{ pointerEvents: 'auto' }}>{extra}</div>}
       <button type="button" title="Undo (Ctrl+Z)" aria-label="Undo" disabled={!canUndo} onClick={onUndo}
         style={{ ...button(canUndo), pointerEvents: 'auto' }}>↶</button>
       <button type="button" title="Redo (Ctrl+Shift+Z)" aria-label="Redo" disabled={!canRedo} onClick={onRedo}

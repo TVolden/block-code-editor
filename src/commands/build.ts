@@ -134,12 +134,15 @@ export function deleteChain(state: CanvasState, leadId: string): Command | null 
   return b.build();
 }
 
-/** A parameter's typed value set (or cleared); nothing when it doesn't change. */
-export function setSocketText(state: CanvasState, blockId: string, slot: number, text: string | null): Command | null {
-  const current = normalizeText(state.blocks.get(blockId)?.paramSlots[slot]?.textValue);
-  const next = normalizeText(text);
-  if (current === next) return null;
-  return { type: 'SetText', blockId, slot, from: current, to: next };
+/**
+ * A parameter's typed value changed from `from` (the text when editing started, so a change someone else made
+ * meanwhile is rejected rather than overwritten) to `to`; nothing when they are the same.
+ */
+export function setSocketText(blockId: string, slot: number, from: string | null, to: string | null): Command | null {
+  const before = normalizeText(from);
+  const after = normalizeText(to);
+  if (before === after) return null;
+  return { type: 'SetText', blockId, slot, from: before, to: after };
 }
 
 /**

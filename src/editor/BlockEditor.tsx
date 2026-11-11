@@ -16,16 +16,18 @@ import type {
   BlockDefinition, ParamType, PlacedBlock, ParamSlot, SerializedCanvas, PackageRef, CatalogPackage, PackageAction,
 } from '../types';
 import { DEPENDENCY_PREFIX, dependencyPackageId, packageKey } from '../utils/packages';
-import type { CanvasState, Command, Place } from '../commands/types';
-import { CommandRejected } from '../commands/types';
-import { applyCommand, fragmentOf, normalizeBlock } from '../commands/apply';
-import { invertCommand } from '../commands/invert';
+import type { CanvasState, Command, Place, RejectionCode } from '../commands/types';
+import { fragmentOf, normalizeBlock } from '../commands/apply';
 import { changeDependencies, deleteChain, moveChain, placeNewBlock, setSocketText } from '../commands/build';
+import type { Collaboration, CommandEnvelope, PeerPresence } from '../collaboration/types';
+import type { ActionKind, SyncState } from '../collaboration/sync';
+import {
+  canUndoRedo, initialSync, onApplied, onRejected, onSnapshot, preview, submitAction, submitRedo, submitUndo,
+} from '../collaboration/sync';
+import { DEFAULT_PRESENCE_INTERVAL_MS, PresencePublisher } from '../collaboration/presence';
+import type { ScriptWriter } from '../export/program';
+import { toProgram } from '../export/program';
 export type { SerializedCanvas, BlockDefinition } from '../types';
-export { default as CardDesigner } from '../carddesigner/CardDesigner';
-export { default as CardPreview } from '../carddesigner/CardPreview';
-export type { CardDesign, CardMeta } from '../carddesigner/cardDesignTypes';
-export { defaultCardDesign } from '../carddesigner/cardDesignTypes';
 import {
   loadBlockRegistry, loadPackage, unloadPackage, getLoadedPackages,
   getDefinition, tryGetDefinition, loadInlinePackage, getBlockPackageId,
@@ -45,6 +47,10 @@ import Canvas from '../components/Canvas';
 import { BlockRenderer } from '../components/BlockRenderer';
 import ThemeSwitcher from '../components/ThemeSwitcher';
 import UndoRedoBar from '../components/UndoRedoBar';
+import { readSetting, writeSetting } from '../utils/storage';
+import { activateEditor, isActiveEditor, registerEditor, unregisterEditor } from './activeEditor';
+import ExportMenu from '../components/ExportMenu';
+import PeersOverlay from '../components/PeersOverlay';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -93,6 +99,16 @@ interface Props {
   availablePackages?: CatalogPackage[];
   /** Extra buttons in the Packages tab. */
   packageActions?: PackageAction[];
+  /**
+   * Collaboration: with `commands` the editor is command-sourced (it submits every action and changes its state only
+   * by the host's events); with `presence` it shares and shows cursors, drags and typing. Without it, standalone.
+   * The channels are read when the editor mounts and whenever they change identity.
+   */
+  collaboration?: Collaboration;
+  /** Script writers offered in the Export menu (the canvas as a program, see `toProgram`). */
+  scriptWriters?: ScriptWriter[];
+  /** Receives an exported script; without it the script is downloaded as `behavior.<extension>`. */
+  onExport?: (script: string, writer: ScriptWriter) => void;
 }
 
 /** Where a query block can snap into a parameter socket. */
@@ -116,6 +132,25 @@ interface DragState {
 }
 
 // ── Helper functions ─────────────────────────────────────────────────────────
+
+/** The client id of a standalone editor (its envelopes never leave it). */
+const LOCAL_CLIENT_ID = 'local';
+
+/** What to tell the user when the host rejects one of their actions. */
+function rejectionNotice(kind: ActionKind, code: RejectionCode): string {
+  const what = kind === 'undo' ? "Couldn't undo" : kind === 'redo' ? "Couldn't redo" : 'Your change was undone';
+  const why: Partial<Record<RejectionCode, string>> = {
+    TEXT_CHANGED:         'someone else changed that parameter',
+    PLACE_OCCUPIED:       'someone else put a block there first',
+    BLOCK_NOT_FOUND:      'a block it needs was deleted',
+    BLOCK_CHANGED:        'someone else changed those blocks',
+    NOT_AT_PLACE:         'someone else moved that block',
+    NOT_A_ROOT:           'someone else moved that block',
+    POSITION_CHANGED:     'someone else moved that block',
+    DEPENDENCIES_CHANGED: 'someone else changed the packages',
+  };
+  return `${what}: ${why[code] ?? 'the canvas has changed'}.`;
+}
 
 /** A new block id: random, so blocks made by different clients never collide. Ids are opaque strings. */
 function newBlockId(): string {
@@ -308,10 +343,11 @@ export default function BlockEditor({
   blocksUrl = '/blocks.json', blocksUrls, onRun, onThemeChange, navTabs, initialState, onSave, themeId, hideTitleBar,
   getStateRef, additionalBlocks,
   dependencies, onDependenciesChange, packageBlocksUrl, availablePackages, packageActions,
+  collaboration, scriptWriters, onExport,
 }: Props) {
   const [theme, setTheme] = useState<Theme>(() => {
     if (themeId) return THEMES.find(t => t.id === themeId) ?? darkTheme;
-    const saved = localStorage.getItem('cardcq-theme');
+    const saved = readSetting('cardcq-theme');
     return THEMES.find(t => t.id === saved) ?? darkTheme;
   });
 
@@ -325,23 +361,34 @@ export default function BlockEditor({
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // ── Canvas state: changed only by applying commands ─────────────────────────
+  // The sync state holds the confirmed state, this client's pending actions and its history. Standalone, an action
+  // is confirmed at once; command-sourced, it is submitted and confirmed (or rejected) by the host's events. What is
+  // shown is the preview: the confirmed state with the pending actions on top.
 
-  const [canvas, setCanvas] = useState<CanvasState>(() => ({
+  const commandChannel = collaboration?.commands;
+  const clientId = collaboration?.clientId ?? LOCAL_CLIENT_ID;
+  const [sync, setSync] = useState<SyncState>(() => initialSync({
     blocks: new Map((initialState?.blocks ?? []).map(([id, block]) => [id, normalizeBlock(block)])),
     dependencies: dependencies ?? [],
   }));
+  const { state: canvas, provisionalIds } = useMemo(() => preview(sync), [sync]);
   const blocks = canvas.blocks;
-  // The latest state for handlers (several commands can be applied before React re-renders).
+  // The latest sync state and preview for handlers (several updates can come before React re-renders).
+  const syncRef = useRef(sync);
   const stateRef = useRef(canvas);
-  useEffect(() => { stateRef.current = canvas; });
+  useEffect(() => {
+    syncRef.current = sync;
+    stateRef.current = canvas;
+  });
 
-  // A host change of the dependencies (not one the editor reported) replaces them, without a history step.
+  // Standalone, a host change of the dependencies (not one the editor reported) replaces them, without a history
+  // step. Command-sourced, they come from the snapshot and the commands only.
   const dependenciesPropKey = (dependencies ?? []).map(dependencyPackageId).join('|');
   const [seenDependenciesPropKey, setSeenDependenciesPropKey] = useState(dependenciesPropKey);
   if (dependenciesPropKey !== seenDependenciesPropKey) {
     setSeenDependenciesPropKey(dependenciesPropKey);
-    if (dependenciesPropKey !== canvas.dependencies.map(dependencyPackageId).join('|')) {
-      setCanvas(c => ({ ...c, dependencies: dependencies ?? [] }));
+    if (!commandChannel && dependenciesPropKey !== sync.confirmed.dependencies.map(dependencyPackageId).join('|')) {
+      setSync(s => ({ ...s, confirmed: { ...s.confirmed, dependencies: dependencies ?? [] } }));
     }
   }
 
@@ -353,54 +400,122 @@ export default function BlockEditor({
   const showNotice = useCallback((text: string) => {
     setNotice(text);
     if (noticeTimer.current) clearTimeout(noticeTimer.current);
-    noticeTimer.current = setTimeout(() => setNotice(null), 4000);
+    noticeTimer.current = setTimeout(() => setNotice(null), 5000);
+  }, []);
+  useEffect(() => () => {
+    if (noticeTimer.current) clearTimeout(noticeTimer.current);
   }, []);
 
-  /** Applies a command to the state; false (and the state unchanged) when it is rejected. */
-  const commit = useCallback((command: Command): boolean => {
-    const previous = stateRef.current;
-    let next: CanvasState;
-    try {
-      next = applyCommand(previous, command);
-    } catch (err) {
-      if (err instanceof CommandRejected) return false;
-      throw err;
+  /** Sets the sync state (and the refs at once); reports a change of the confirmed dependencies to the host. */
+  const updateSync = useCallback((next: SyncState) => {
+    const previous = syncRef.current;
+    syncRef.current = next;
+    stateRef.current = preview(next).state;
+    setSync(next);
+    if (next.confirmed.dependencies !== previous.confirmed.dependencies) {
+      onDependenciesChangeRef.current?.(next.confirmed.dependencies);
     }
-    stateRef.current = next;
-    setCanvas(next);
-    if (next.dependencies !== previous.dependencies) onDependenciesChangeRef.current?.(next.dependencies);
-    return true;
   }, []);
 
-  // Undo/redo: the user actions applied in this session.
-  const [history, setHistory] = useState<{ undo: Command[]; redo: Command[] }>({ undo: [], redo: [] });
+  /**
+   * Sends an action that `withAction` added as pending: to the host when command-sourced (it stays pending until its
+   * event comes back), else confirmed at once.
+   */
+  const submit = useCallback((withAction: SyncState, id: string, command: Command) => {
+    const envelope: CommandEnvelope = { id, clientId, baseVersion: syncRef.current.version, command };
+    if (commandChannel) {
+      updateSync(withAction);
+      commandChannel.submit(envelope);
+      return;
+    }
+    const applied = onApplied(withAction, envelope, withAction.version + 1);
+    if (applied.outOfSync) {
+      updateSync(onRejected(withAction, id).sync);
+      showNotice("That change couldn't be made: the canvas has changed.");
+    } else {
+      updateSync(applied.sync);
+    }
+  }, [clientId, commandChannel, updateSync, showNotice]);
 
-  /** A user action: applied and recorded for undo. Nothing for null (an action that changes nothing). */
+  /** A user action (one undo step). Nothing for null (an action that changes nothing). */
   const perform = useCallback((command: Command | null) => {
     if (!command) return;
-    if (commit(command)) setHistory(h => ({ undo: [...h.undo, command], redo: [] }));
-    else showNotice("That change couldn't be made: the canvas has changed.");
-  }, [commit, showNotice]);
+    const id = newBlockId();
+    submit(submitAction(syncRef.current, id, command), id, command);
+  }, [submit]);
 
   const undo = useCallback(() => {
-    const command = history.undo[history.undo.length - 1];
-    if (!command) return;
-    const undone = commit(invertCommand(command));
-    setHistory(h => ({ undo: h.undo.slice(0, -1), redo: undone ? [...h.redo, command] : h.redo }));
-    if (!undone) showNotice("Couldn't undo: the canvas has changed since.");
-  }, [history, commit, showNotice]);
+    const id = newBlockId();
+    const undone = submitUndo(syncRef.current, id);
+    if (undone) submit(undone.sync, id, undone.command);
+  }, [submit]);
 
   const redo = useCallback(() => {
-    const command = history.redo[history.redo.length - 1];
-    if (!command) return;
-    const redone = commit(command);
-    setHistory(h => ({ undo: redone ? [...h.undo, command] : h.undo, redo: h.redo.slice(0, -1) }));
-    if (!redone) showNotice("Couldn't redo: the canvas has changed since.");
-  }, [history, commit, showNotice]);
+    const id = newBlockId();
+    const redone = submitRedo(syncRef.current, id);
+    if (redone) submit(redone.sync, id, redone.command);
+  }, [submit]);
+
+  // ── Presence: this client's (published, throttled) and the others' ─────────
+
+  const presenceChannel = collaboration?.presence;
+  const presenceIntervalMs = collaboration?.presenceIntervalMs ?? DEFAULT_PRESENCE_INTERVAL_MS;
+  const publisherRef = useRef<PresencePublisher | null>(null);
+  const [peers, setPeers] = useState<PeerPresence[]>([]);
+  useEffect(() => {
+    if (!presenceChannel) return;
+    const publisher = new PresencePublisher(p => presenceChannel.publish(p), presenceIntervalMs);
+    publisherRef.current = publisher;
+    const unsubscribe = presenceChannel.subscribe(list => setPeers(list.filter(p => p.clientId !== clientId)));
+    return () => {
+      publisher.updateNow({ cursor: null, drag: null, typing: null });
+      publisher.dispose();
+      publisherRef.current = null;
+      unsubscribe();
+      setPeers([]);
+    };
+  }, [presenceChannel, presenceIntervalMs, clientId]);
+
+  // The host's events, when command-sourced.
+  useEffect(() => {
+    if (!commandChannel) return;
+    return commandChannel.subscribe(event => {
+      if (event.type === 'snapshot') {
+        const state: CanvasState = {
+          blocks: new Map(event.state.blocks.map(([id, block]) => [id, normalizeBlock(block)])),
+          dependencies: event.state.dependencies,
+        };
+        const result = onSnapshot(state, event.version, syncRef.current);
+        updateSync(result.sync);
+        if (result.dropped > 0) showNotice('Reloaded from the server: your unconfirmed changes were discarded.');
+      } else if (event.type === 'applied') {
+        const result = onApplied(syncRef.current, event.envelope, event.version);
+        if (result.outOfSync) {
+          showNotice('Out of sync with the server: reloading…');
+          commandChannel.resync?.();
+        } else {
+          updateSync(result.sync);
+        }
+      } else {
+        const result = onRejected(syncRef.current, event.id);
+        updateSync(result.sync);
+        if (result.action) showNotice(rejectionNotice(result.action.kind, event.code));
+      }
+    });
+  }, [commandChannel, updateSync, showNotice]);
+
+  // Keyboard shortcuts act on the active editor only (several can share a page): the one last pointed into or focused.
+  const [editorId] = useState(() => Symbol('BlockEditor'));
+  useEffect(() => {
+    registerEditor(editorId);
+    return () => unregisterEditor(editorId);
+  }, [editorId]);
+  const activate = useCallback(() => activateEditor(editorId), [editorId]);
 
   // Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z and Ctrl+Y, except while typing in a field.
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
+      if (!isActiveEditor(editorId)) return;
       const target = e.target as HTMLElement | null;
       if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
       if (!(e.ctrlKey || e.metaKey)) return;
@@ -410,7 +525,7 @@ export default function BlockEditor({
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [undo, redo]);
+  }, [undo, redo, editorId]);
   // Which "start" block definition IDs are already placed on the canvas.
   // Used to enforce one-instance-per-event-type.
   const placedStartIds = useMemo(() => {
@@ -450,7 +565,9 @@ export default function BlockEditor({
 
   // The latest dependencies (the canvas's: they change by commands), for the loaders below (which run on the registry
   // one after the other, see loadQueue). Without the dependencies prop the editor maintains no packages.
-  const maintainsPackages   = dependencies !== undefined;
+  // Standalone the host passes `dependencies`; command-sourced they come with the snapshot, and `packageBlocksUrl` says
+  // the host wants them maintained.
+  const maintainsPackages   = dependencies !== undefined || (collaboration?.commands !== undefined && packageBlocksUrl !== undefined);
   const dependenciesRef     = useRef<PackageRef[] | undefined>(maintainsPackages ? canvas.dependencies : undefined);
   const packageBlocksUrlRef = useRef(packageBlocksUrl);
   useEffect(() => {
@@ -626,19 +743,39 @@ export default function BlockEditor({
     onRun?.(lines);
   }, [blocks, onRun]);
 
-  const [editingSocket, setEditingSocket] = useState<{ blockId: string; slotIndex: number } | null>(null);
+  // The socket being typed into, with its text when editing started (the SetText's `from`: a change someone else
+  // makes meanwhile rejects this one instead of being overwritten).
+  type EditingSocket = { blockId: string; slotIndex: number; startText: string | null };
+  const [editingSocket, setEditingSocket] = useState<EditingSocket | null>(null);
+  // The edit in progress for the handlers: Enter and the input's blur can both commit, and only the first counts.
+  const editingRef = useRef<EditingSocket | null>(null);
 
   const handleSocketClick = useCallback((blockId: string, slotIndex: number) => {
     if (dragRef.current?.moved) return;
-    setEditingSocket({ blockId, slotIndex });
+    const startText = stateRef.current.blocks.get(blockId)?.paramSlots[slotIndex]?.textValue ?? null;
+    editingRef.current = { blockId, slotIndex, startText };
+    setEditingSocket(editingRef.current);
+    publisherRef.current?.updateNow({ typing: { blockId, slot: slotIndex, text: startText ?? '' } });
+  }, []);
+
+  const handleSocketInput = useCallback((blockId: string, slotIndex: number, text: string) => {
+    publisherRef.current?.update({ typing: { blockId, slot: slotIndex, text } });
   }, []);
 
   const handleSocketCommit = useCallback((blockId: string, slotIndex: number, value: string) => {
+    const editing = editingRef.current;
+    editingRef.current = null;
     setEditingSocket(null);
-    perform(setSocketText(stateRef.current, blockId, slotIndex, value));
+    if (!editing || editing.blockId !== blockId || editing.slotIndex !== slotIndex) return;
+    publisherRef.current?.updateNow({ typing: null });
+    perform(setSocketText(blockId, slotIndex, editing.startText, value));
   }, [perform]);
 
-  const handleSocketCancelEdit = useCallback(() => setEditingSocket(null), []);
+  const handleSocketCancelEdit = useCallback(() => {
+    editingRef.current = null;
+    setEditingSocket(null);
+    publisherRef.current?.updateNow({ typing: null });
+  }, []);
 
   /**
    * The Packages tab changed the dependencies: one user action that also removes the blocks of removed packages
@@ -656,7 +793,7 @@ export default function BlockEditor({
 
   const changeTheme = useCallback((t: Theme) => {
     setTheme(t);
-    if (!themeId) localStorage.setItem('cardcq-theme', t.id);
+    if (!themeId) writeSetting('cardcq-theme', t.id);
     onThemeChange?.(t);
   }, [onThemeChange, themeId]);
 
@@ -710,11 +847,21 @@ export default function BlockEditor({
     function onPointerMove(e: PointerEvent) {
       const drag = dragRef.current;
       if (!drag) return;
+      let started = false;
       if (!drag.moved && (Math.abs(e.clientX - drag.startClientX) > 4 || Math.abs(e.clientY - drag.startClientY) > 4)) {
         drag.moved = true;
+        started = true;
       }
       if (!drag.moved) return;
       setGhostPos({ x: e.clientX - drag.offsetX, y: e.clientY - drag.offsetY, defId: drag.defId });
+
+      // Presence: the ghost's top-left in canvas coordinates (sent at once when the drag starts).
+      const at = toSVG(e.clientX - drag.offsetX, e.clientY - drag.offsetY);
+      const dragPresence = drag.type === 'canvas'
+        ? { drag: { leadId: drag.instanceId!, at }, cursor: toSVG(e.clientX, e.clientY) }
+        : { drag: { definitionId: drag.defId, at }, cursor: toSVG(e.clientX, e.clientY) };
+      if (started) publisherRef.current?.updateNow(dragPresence);
+      else publisherRef.current?.update(dragPresence);
 
       if (drag.type === 'canvas') {
         const rect = canvasRef.current?.getBoundingClientRect();
@@ -735,6 +882,7 @@ export default function BlockEditor({
       isOverPaletteRef.current = false;
       setIsOverPalette(false);
       if (!drag.moved) return;
+      publisherRef.current?.updateNow({ drag: null });
 
       const canvasRect = canvasRef.current?.getBoundingClientRect();
       if (!canvasRect) return;
@@ -785,7 +933,33 @@ export default function BlockEditor({
       document.removeEventListener('pointermove', onPointerMove);
       document.removeEventListener('pointerup', onPointerUp);
     };
-  }, [findSnapTarget, findSocketSnap, perform]);
+  }, [findSnapTarget, findSocketSnap, perform, toSVG]);
+
+  // ── Cursor presence and export ───────────────────────────────────────────────
+
+  const handleCanvasPointerMove = useCallback((e: React.PointerEvent) => {
+    if (dragRef.current?.moved) return;   // a drag publishes its own cursor
+    publisherRef.current?.update({ cursor: toSVG(e.clientX, e.clientY) });
+  }, [toSVG]);
+
+  const handleCanvasPointerLeave = useCallback(() => {
+    if (dragRef.current?.moved) return;
+    publisherRef.current?.updateNow({ cursor: null });
+  }, []);
+
+  const handleExport = useCallback((writer: ScriptWriter) => {
+    const script = writer.write(toProgram(stateRef.current, tryGetDefinition));
+    if (onExport) {
+      onExport(script, writer);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([script], { type: 'text/plain' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `behavior.${writer.fileExtension}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [onExport]);
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
@@ -819,7 +993,8 @@ export default function BlockEditor({
 
   return (
     <ThemeContext.Provider value={theme}>
-    <div style={outerStyle}>
+    {/* Capture phase: blocks stop pointer-down from bubbling. */}
+    <div style={outerStyle} onPointerDownCapture={activate} onFocusCapture={activate}>
       {/* ── Title bar ── */}
       {!hideTitleBar && (
       <div style={{
@@ -859,7 +1034,7 @@ export default function BlockEditor({
           onPointerDown={handlePalettePointerDown}
           isDropTarget={isOverPalette}
           registryVersion={registryVersion}
-          packages={maintainsPackages && onDependenciesChange ? {
+          packages={maintainsPackages && (onDependenciesChange || commandChannel) ? {
             available:      availablePackages ?? [],
             dependencies:   canvas.dependencies,
             onChange:       handleDependenciesChange,
@@ -871,25 +1046,33 @@ export default function BlockEditor({
           } : undefined}
           placedStartIds={placedStartIds}
         />
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', position: 'relative' }}>
+        <div
+          style={{ flex: 1, minWidth: 0, display: 'flex', position: 'relative' }}
+          onPointerMove={handleCanvasPointerMove}
+          onPointerLeave={handleCanvasPointerLeave}
+        >
           <Canvas
             ref={canvasRef}
             blocks={blocks}
             draggingIds={draggingIds}
+            provisionalIds={provisionalIds}
             onBlockPointerDown={handleBlockPointerDown}
             onBlockClick={handleBlockClick}
             onSocketClick={handleSocketClick}
             editingSocket={editingSocket}
+            onSocketInput={handleSocketInput}
             onSocketCommit={handleSocketCommit}
             onSocketCancelEdit={handleSocketCancelEdit}
             onOutputDrag={handlePalettePointerDown}
+            overlay={peers.length > 0 ? <PeersOverlay peers={peers} blocks={blocks} layout={layout} /> : null}
           />
           <UndoRedoBar
-            canUndo={history.undo.length > 0}
-            canRedo={history.redo.length > 0}
+            canUndo={canUndoRedo(sync) && sync.undo.length > 0}
+            canRedo={canUndoRedo(sync) && sync.redo.length > 0}
             onUndo={undo}
             onRedo={redo}
             notice={notice}
+            extra={scriptWriters && scriptWriters.length > 0 ? <ExportMenu writers={scriptWriters} onExport={handleExport} /> : null}
           />
         </div>
       </div>

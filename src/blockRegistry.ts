@@ -24,8 +24,14 @@ const loadedPkgMap    = new Map<string, LoadedPackage>();   // packageId → met
 
 // ── Package-aware loaders ─────────────────────────────────────────────────────
 
-/** Fetch a package JSON and merge its blocks into the registry (first-registered wins). */
+/**
+ * Fetch a package JSON and merge its blocks into the registry (first-registered wins). A package already loaded under
+ * the same id from the same URL is kept as it is (several editors on a page share the registry).
+ */
 export async function loadPackage(info: PackageInfo): Promise<LoadedPackage> {
+  const existing = loadedPkgMap.get(info.id);
+  if (existing && existing.info.url === info.url) return existing;
+  if (existing) unloadPackage(info.id);
   const res = await fetch(info.url);
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${info.url}`);
   const defs: BlockDefinition[] = await res.json();
@@ -109,10 +115,17 @@ export function loadInlinePackage(info: PackageInfo, defs: BlockDefinition[]): L
 
 // ── Bootstrap helper (backward-compatible) ────────────────────────────────────
 
-/** Load the initial/core block set. Clears all prior registry state first. */
+/**
+ * Load the initial/core block set. Clears all prior registry state first, unless the core set from this URL is loaded
+ * already: then everything stays (another editor on the page uses it; the editors' dependency sync unloads what they
+ * no longer need).
+ */
 export async function loadBlockRegistry(url: string): Promise<void> {
+  if (loadedPkgMap.get(CORE_ID)?.info.url === url) return;
   registry.clear();
   blockPackageMap.clear();
   loadedPkgMap.clear();
-  await loadPackage({ id: '__core__', name: 'Core', description: 'Built-in blocks', url, builtIn: true });
+  await loadPackage({ id: CORE_ID, name: 'Core', description: 'Built-in blocks', url, builtIn: true });
 }
+
+const CORE_ID = '__core__';

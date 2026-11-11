@@ -24,6 +24,10 @@ interface Props {
   isGhost?: boolean;
   /** Blocks being dragged: drawn faded where they are (with everything hanging off them) until the drop. */
   draggingIds?: Set<string>;
+  /** Blocks changed by actions not confirmed yet: drawn with a dashed outline and italic text. */
+  provisionalIds?: Set<string>;
+  /** The text of the socket being typed into, on every keystroke. */
+  onSocketInput?: (blockId: string, slotIndex: number, text: string) => void;
   embedded?: boolean;
 }
 
@@ -60,11 +64,12 @@ export function BlockRenderer(props: Props) {
   const {
     block, allBlocks, onPointerDown, onBlockClick, onSocketClick,
     editingSocket, onSocketCommit, onSocketCancelEdit, onOutputDrag,
-    isGhost, draggingIds, embedded,
+    isGhost, draggingIds, provisionalIds, onSocketInput, embedded,
   } = props;
   const theme = useTheme();
   const def   = tryGetDefinition(block.definitionId);
   const isDragging = draggingIds?.has(block.instanceId) ?? false;
+  const isProvisional = provisionalIds?.has(block.instanceId) ?? false;
 
   /** Draws a block that hangs off this one, at (x, y) relative to it. */
   const renderChild = (childId: string | null | undefined, x: number, y: number, key: string) => {
@@ -84,6 +89,8 @@ export function BlockRenderer(props: Props) {
           onOutputDrag={onOutputDrag}
           isGhost={isGhost}
           draggingIds={draggingIds}
+          provisionalIds={provisionalIds}
+          onSocketInput={onSocketInput}
           embedded
         />
       </g>
@@ -127,7 +134,7 @@ export function BlockRenderer(props: Props) {
   const sockets = getSocketPositions(def, block.paramSlots, allBlocks);
   const mouths  = getMouthPositions(def, block.paramSlots, allBlocks);
   // Blocks drawn by another block inherit its opacity.
-  const opacity = isDragging ? 0.35 : isGhost && !embedded ? 0.75 : 1;
+  const opacity = isDragging ? 0.35 : isProvisional ? 0.6 : isGhost && !embedded ? 0.75 : 1;
 
   // All block types: neutral body + left color stripe
   const clipId = `clip-${isGhost ? 'g' : 'c'}-${block.instanceId}`;
@@ -190,7 +197,8 @@ export function BlockRenderer(props: Props) {
       </defs>
 
       {/* Block body */}
-      <path d={path} fill={theme.blockBody} stroke={theme.blockBorder} strokeWidth={1.5} />
+      <path d={path} fill={theme.blockBody} stroke={isProvisional ? theme.accent : theme.blockBorder} strokeWidth={1.5}
+        strokeDasharray={isProvisional ? '4,3' : undefined} />
 
       {/* Left color stripe — 4px wide, clipped to block shape */}
       <rect x={0} y={0} width={4} height={h + 20}
@@ -294,6 +302,7 @@ export function BlockRenderer(props: Props) {
                 <input
                   autoFocus
                   defaultValue={tv ?? ''}
+                  onChange={(e) => onSocketInput?.(block.instanceId, sock.index, e.target.value)}
                   onKeyDown={(e) => {
                     e.stopPropagation();
                     if (e.key === 'Enter')  onSocketCommit?.(block.instanceId, sock.index, (e.target as HTMLInputElement).value);
@@ -313,6 +322,7 @@ export function BlockRenderer(props: Props) {
             ) : tv ? (
               <text x={sock.w / 2} y={sock.h / 2 + 4} textAnchor="middle"
                 fill={theme.blockText} fontSize={10} fontFamily="sans-serif"
+                fontStyle={isProvisional ? 'italic' : undefined}
                 style={{ userSelect: 'none', pointerEvents: 'none' }}>{tv}</text>
             ) : (
               <SocketHint name={paramName} type={sock.type} w={sock.w} h={sock.h} />

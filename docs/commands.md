@@ -125,7 +125,7 @@ The editor builds these commands (`src/commands/build.ts`; the builders are expo
 | Attach to a place | `Attach`. A socket with text first gets `SetText` to `null`. At the top of an occupied mouth: `Detach` the old head to `(0, 0)`, `Attach` the new chain, `Attach` the old head under the new chain's last block (from `(0, 0)`). |
 | Move a block (with the blocks under it) | If linked: `Detach` to the drop position, then attach (as above) or nothing. If a root: attach, or `MoveBlock` (nothing if the position is unchanged). Nothing at all when dropped back in its own place. |
 | Delete | `Detach` (if linked) to `(0, 0)`, then `RemoveBlocks` of its fragment |
-| Type a parameter | `SetText` (when the value changes) |
+| Type a parameter | `SetText` from the text when editing started (so a change someone else made meanwhile rejects it) to the new value; nothing when they are the same |
 | Remove a package | For each of its blocks: `Detach` the block under it, `Detach` the block itself, `RemoveBlocks` its fragment, then `Attach` the block that was under it in its place. Then `SetDependencies`. |
 | Add or update a package | `SetDependencies` |
 

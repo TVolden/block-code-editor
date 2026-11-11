@@ -15,11 +15,18 @@ export type {
   CanvasState, Command, Place, Position, RejectionCode,
   InsertBlocks, RemoveBlocks, MoveBlock, Attach, Detach, SetText, SetDependencies, Batch,
 } from './commands';
+// Collaboration (docs/collaboration.md): the channels a host implements for command sourcing and presence.
+export type {
+  Collaboration, CommandChannel, CommandEnvelope, CommandEvent, PresenceChannel, Presence, PeerPresence,
+  SerializedCanvasState,
+} from './collaboration/types';
+// Script export: the canvas as a program, and writers that turn it into text.
+export { toProgram } from './export/program';
+export type { Program, ProgramRoot, ProgramNode, ProgramArg, ProgramValue, ScriptWriter } from './export/program';
+// Examples: a Python script writer, and an in-memory collaboration server (the reference for a real backend).
+export { pythonWriter } from './demo/pythonWriter';
+export { LocalServer } from './demo/LocalServer';
 export { COMMAND_PARAM_TYPE } from './types';
-export { default as CardDesigner } from './carddesigner/CardDesigner';
-export { default as CardPreview } from './carddesigner/CardPreview';
-export type { CardDesign, CardMeta } from './carddesigner/cardDesignTypes';
-export { defaultCardDesign } from './carddesigner/cardDesignTypes';
 export { ThemeContext, useTheme } from './ThemeContext';
 export { darkTheme, THEMES } from './theme';
 export type { Theme, ThemeId } from './theme';
