@@ -111,6 +111,9 @@ Applies the commands in order, each against the state the previous ones left. If
 
 An unknown `type` is rejected with `INVALID_COMMAND`.
 
+### `HOST_REJECTED`
+A host that applies commands itself (e.g. a collaboration server) may refuse one that passes these checks, for its own reasons. Examples: a `SetDependencies` to a package that isn't published, or a command that would make the behavior invalid for that host. It rejects it with `HOST_REJECTED`, and its message says why. The editor never produces this code.
+
 ## What the checks don't cover
 
 Commands are structural: they never look at block definitions. Whether a query's type fits a socket, or a block may go in a mouth, is the editor's rule while dragging. A host checks it when it validates the behavior itself, for example before running it.

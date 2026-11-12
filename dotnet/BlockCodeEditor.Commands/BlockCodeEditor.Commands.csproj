@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The block editor's command contract (docs/commands.md) and program tree in .NET, for hosts that apply and check
+    commands themselves (e.g. a collaboration server). No package dependencies: hosts reference the built DLL, which a
+    Release build copies to dotnet/artifacts/ (see docs/dotnet.md).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>BlockCodeEditor.Commands</RootNamespace>
+    <AssemblyName>BlockCodeEditor.Commands</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Self-explanatory members (the rejection codes, Place's factories) are described in docs/commands.md. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+
+  <!-- Hosts reference the Release build from a fixed place: the DLL, its XML docs, and its symbols (line numbers in traces). -->
+  <Target Name="CopyToArtifacts" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
+    <Copy SourceFiles="$(TargetPath);$(DocumentationFile);$(TargetDir)$(TargetName).pdb" DestinationFolder="$(MSBuildThisFileDirectory)..\artifacts" />
+  </Target>
+
+</Project>

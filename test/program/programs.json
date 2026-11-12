@@ -1,0 +1,73 @@
+[
+  {
+    "name": "a start block with a block under it, typed values",
+    "definitions": [
+      { "id": "GameStarted", "name": "GameStarted", "blockType": "start", "params": [], "category": "c", "color": "#000" },
+      { "id": "DrawCard", "name": "DrawCard", "blockType": "command", "params": [{ "name": "Count", "type": "number" }], "category": "c", "color": "#000" }
+    ],
+    "canvas": { "dependencies": [], "blocks": [
+      { "instanceId": "s", "definitionId": "GameStarted", "x": 10, "y": 20, "nextBlockId": "d", "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [] },
+      { "instanceId": "d", "definitionId": "DrawCard", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": "s", "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": "2", "queryBlockId": null, "commandBlockId": null }] }
+    ] },
+    "program": { "roots": [
+      { "position": { "x": 10, "y": 20 }, "body": [
+        { "definitionId": "GameStarted", "name": "GameStarted", "blockType": "start", "args": [] },
+        { "definitionId": "DrawCard", "name": "DrawCard", "blockType": "command", "args": [
+          { "name": "Count", "type": "number", "value": { "kind": "text", "text": "2" } }
+        ] }
+      ] }
+    ] }
+  },
+  {
+    "name": "mouths (filled and empty), a query with an argument, roots top to bottom then left to right",
+    "definitions": [
+      { "id": "ExposeCommand", "name": "ExposeCommand", "blockType": "command", "params": [{ "name": "Label", "type": "string" }, { "name": "Player", "type": "Player" }, { "name": "Command", "type": "command" }], "category": "c", "color": "#000" },
+      { "id": "Either", "name": "Either", "blockType": "command", "params": [{ "name": "GroupA", "type": "command" }, { "name": "GroupB", "type": "command" }], "category": "c", "color": "#000" },
+      { "id": "DrawCard", "name": "DrawCard", "blockType": "command", "params": [{ "name": "Count", "type": "number" }], "category": "c", "color": "#000" },
+      { "id": "GetPlayer", "name": "GetPlayer", "blockType": "query", "returnType": "Player", "params": [{ "name": "N", "type": "number" }], "category": "c", "color": "#000" }
+    ],
+    "canvas": { "dependencies": [], "blocks": [
+      { "instanceId": "x", "definitionId": "Either", "x": 300, "y": 60, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": null, "queryBlockId": null, "commandBlockId": null }, { "textValue": null, "queryBlockId": null, "commandBlockId": null }] },
+      { "instanceId": "e", "definitionId": "ExposeCommand", "x": 50, "y": 60, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": "Draw", "queryBlockId": null, "commandBlockId": null }, { "textValue": null, "queryBlockId": "p", "commandBlockId": null }, { "textValue": null, "queryBlockId": null, "commandBlockId": "d" }] },
+      { "instanceId": "p", "definitionId": "GetPlayer", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": "e", "embeddedSlotIndex": 1, "paramSlots": [{ "textValue": "1", "queryBlockId": null, "commandBlockId": null }] },
+      { "instanceId": "d", "definitionId": "DrawCard", "x": 0, "y": 0, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": "e", "embeddedSlotIndex": 2, "paramSlots": [{ "textValue": null, "queryBlockId": null, "commandBlockId": null }] }
+    ] },
+    "program": { "roots": [
+      { "position": { "x": 50, "y": 60 }, "body": [
+        { "definitionId": "ExposeCommand", "name": "ExposeCommand", "blockType": "command", "args": [
+          { "name": "Label", "type": "string", "value": { "kind": "text", "text": "Draw" } },
+          { "name": "Player", "type": "Player", "value": { "kind": "query", "node":
+            { "definitionId": "GetPlayer", "name": "GetPlayer", "blockType": "query", "args": [
+              { "name": "N", "type": "number", "value": { "kind": "text", "text": "1" } }
+            ] } } },
+          { "name": "Command", "type": "command", "value": { "kind": "body", "body": [
+            { "definitionId": "DrawCard", "name": "DrawCard", "blockType": "command", "args": [
+              { "name": "Count", "type": "number", "value": { "kind": "empty" } }
+            ] }
+          ] } }
+        ] }
+      ] },
+      { "position": { "x": 300, "y": 60 }, "body": [
+        { "definitionId": "Either", "name": "Either", "blockType": "command", "args": [
+          { "name": "GroupA", "type": "command", "value": { "kind": "body", "body": [] } },
+          { "name": "GroupB", "type": "command", "value": { "kind": "body", "body": [] } }
+        ] }
+      ] }
+    ] }
+  },
+  {
+    "name": "a block whose definition is missing keeps its slots",
+    "definitions": [],
+    "canvas": { "dependencies": [], "blocks": [
+      { "instanceId": "g", "definitionId": "Gone", "x": 5, "y": 5, "nextBlockId": null, "parentBlockId": null, "embeddedInBlockId": null, "embeddedSlotIndex": -1, "paramSlots": [{ "textValue": "a", "queryBlockId": null, "commandBlockId": null }, { "textValue": "", "queryBlockId": null, "commandBlockId": null }] }
+    ] },
+    "program": { "roots": [
+      { "position": { "x": 5, "y": 5 }, "body": [
+        { "definitionId": "Gone", "name": "Gone", "blockType": "missing", "args": [
+          { "name": "param0", "type": "string", "value": { "kind": "text", "text": "a" } },
+          { "name": "param1", "type": "string", "value": { "kind": "empty" } }
+        ] }
+      ] }
+    ] }
+  }
+]

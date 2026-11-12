@@ -57,7 +57,7 @@ How the editor behaves:
 
 The server applies each command with the checks of `docs/commands.md`. It numbers the applied ones, broadcasts them to every client, and sends rejections to the submitter only. `LocalServer` is an in-memory reference implementation, used by the dev app's "Multiplayer demo" and the tests.
 
-**Dependencies** come with the snapshot and change by `SetDependencies` commands. Pass `packageBlocksUrl` (and `availablePackages`) to maintain them in the Packages tab.
+**Dependencies** come with the snapshot and change by `SetDependencies` commands. Pass `packageBlocksUrl` (and `availablePackages`) to maintain them in the Packages tab. The `dependencies` prop is ignored here, so a host button that changes them (e.g. "Import game packages") is a `packageActions` entry with `dependencies: current => [...]` instead of `onClick`: the change is a user action like one made in the tab (undoable, submitted).
 
 ## Presence
 

@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="BlockCodeEditor.Commands/BlockCodeEditor.Commands.csproj" />
+  <Project Path="BlockCodeEditor.Commands.Tests/BlockCodeEditor.Commands.Tests.csproj" />
+</Solution>

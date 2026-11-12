@@ -78,12 +78,14 @@ export interface CatalogPackage extends PackageRef {
   color?: string;
 }
 
-/** An extra button in the Packages tab, e.g. "Import game packages". */
-export interface PackageAction {
-  label: string;
-  title?: string;
-  onClick: () => void;
-}
+/**
+ * An extra button in the Packages tab, e.g. "Import game packages". It either runs the host's `onClick`, or gives the
+ * dependencies to change to (`dependencies`, from the current ones): a user action like a change made in the tab,
+ * so it is undoable and, when command-sourced, submitted.
+ */
+export type PackageAction =
+  | { label: string; title?: string; onClick: () => void }
+  | { label: string; title?: string; dependencies: (current: PackageRef[]) => PackageRef[] };
 
 /**
  * Serialized form of the block canvas — safe to JSON.stringify/parse and

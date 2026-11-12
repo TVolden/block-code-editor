@@ -1,4 +1,13 @@
-import type { PackageRef } from '../types';
+import type { PackageAction, PackageRef } from '../types';
+
+/**
+ * Runs a Packages tab action: the host's `onClick`, or a change to the dependencies the action gives from the current
+ * ones (through `change`, as a change made in the tab).
+ */
+export function runPackageAction(action: PackageAction, current: PackageRef[], change: (to: PackageRef[]) => void): void {
+  if ('dependencies' in action) change(action.dependencies(current));
+  else action.onClick();
+}
 
 /** A package's identity regardless of version: `publisher/name`. */
 export function packageKey(p: { publisher: string; name: string }): string {

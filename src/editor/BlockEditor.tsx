@@ -137,8 +137,10 @@ interface DragState {
 const LOCAL_CLIENT_ID = 'local';
 
 /** What to tell the user when the host rejects one of their actions. */
-function rejectionNotice(kind: ActionKind, code: RejectionCode): string {
+function rejectionNotice(kind: ActionKind, code: RejectionCode, message: string): string {
   const what = kind === 'undo' ? "Couldn't undo" : kind === 'redo' ? "Couldn't redo" : 'Your change was undone';
+  // The host's own reason: only its message says what it is.
+  if (code === 'HOST_REJECTED') return `${what}: ${message}`;
   const why: Partial<Record<RejectionCode, string>> = {
     TEXT_CHANGED:         'someone else changed that parameter',
     PLACE_OCCUPIED:       'someone else put a block there first',
@@ -499,7 +501,7 @@ export default function BlockEditor({
       } else {
         const result = onRejected(syncRef.current, event.id);
         updateSync(result.sync);
-        if (result.action) showNotice(rejectionNotice(result.action.kind, event.code));
+        if (result.action) showNotice(rejectionNotice(result.action.kind, event.code, event.message));
       }
     });
   }, [commandChannel, updateSync, showNotice]);

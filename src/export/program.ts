@@ -8,7 +8,7 @@ import type { CanvasState, Position } from '../commands/types';
 import { isCommandParam } from '../utils/blockLayout';
 
 export interface Program {
-  /** The chains on the canvas, top to bottom, then left to right. */
+  /** The chains on the canvas, top to bottom, then left to right (then by id). */
   roots: ProgramRoot[];
 }
 
@@ -90,7 +90,8 @@ export function toProgram(state: CanvasState, definitionOf: (id: string) => Bloc
 
   const roots = [...state.blocks.values()]
     .filter(b => !b.parentBlockId && !b.embeddedInBlockId)
-    .sort((a, b) => a.y - b.y || a.x - b.x);
+    // Ties (same position) by id, compared as the .NET library does (ordinal, by UTF-16 code unit).
+    .sort((a, b) => a.y - b.y || a.x - b.x || (a.instanceId < b.instanceId ? -1 : a.instanceId > b.instanceId ? 1 : 0));
   return {
     roots: roots.map(root => ({ position: { x: root.x, y: root.y }, body: chain(root.instanceId) })),
   };

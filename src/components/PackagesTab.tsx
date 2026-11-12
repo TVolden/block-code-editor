@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type React from 'react';
 import type { CatalogPackage, PackageAction, PackageRef } from '../types';
-import { compareVersions, packageKey } from '../utils/packages';
+import { compareVersions, packageKey, runPackageAction } from '../utils/packages';
 import { useTheme } from '../ThemeContext';
 
 export interface PackagesTabProps {
@@ -147,7 +147,7 @@ export default function PackagesTab({ available, dependencies, onChange, actions
       {actions && actions.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {actions.map(action => (
-            <button key={action.label} type="button" onClick={action.onClick} title={action.title} style={button}>
+            <button key={action.label} type="button" onClick={() => runPackageAction(action, dependencies, onChange)} title={action.title} style={button}>
               {action.label}
             </button>
           ))}

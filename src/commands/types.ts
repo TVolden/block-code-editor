@@ -60,7 +60,8 @@ export type RejectionCode =
   | 'SLOT_HAS_QUERY'        // the parameter holds a query, so it has no text
   | 'TEXT_CHANGED'          // the parameter's text isn't what the command expects
   | 'DEPENDENCIES_CHANGED'  // the dependencies aren't what the command expects
-  | 'INVALID_COMMAND';      // the command is malformed (unknown type, empty fragment, ...)
+  | 'INVALID_COMMAND'       // the command is malformed (unknown type, empty fragment, ...)
+  | 'HOST_REJECTED';        // the host refused it for its own reasons (e.g. a package that doesn't exist); the message says why
 
 /** Thrown by `applyCommand` when a command's checks fail. The state is unchanged. */
 export class CommandRejected extends Error {
