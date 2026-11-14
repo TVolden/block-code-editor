@@ -10,13 +10,12 @@ packages/editor/dist-embed/
 packages/platform/.next/
 packages/platform/out/
 
-# Packed tarballs (npm pack), which the platform installs from while a version isn't published
+# Packed tarballs (npm pack), for trying an unreleased version in a host
 *.tgz
 
-# .NET library builds (hosts reference dotnet/artifacts/ after `dotnet build -c Release dotnet/BlockCodeEditor.slnx`)
+# .NET library builds
 dotnet/**/bin/
 dotnet/**/obj/
-dotnet/artifacts/
 dotnet/**/TestResults/
 
 # TypeScript cache

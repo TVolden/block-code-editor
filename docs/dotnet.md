@@ -5,28 +5,49 @@ For hosts written in .NET that work with the editor's canvases themselves, for e
 - **the command contract** (`docs/commands.md`): the canvas, its 8 commands with their checks and inverses, the rejection codes, and the JSON format. It is the same as the editor's `src/commands/`, and both run the shared cases in `test/commands/`;
 - **the program tree**: the canvas as chains of blocks and their arguments, the same as the editor's `toProgram` (`src/export/program.ts`), plus the way back.
 
-It has no package dependencies beyond .NET itself. It isn't published: a host references the built DLL.
-
-## Building
-
-```
-dotnet build -c Release dotnet/BlockCodeEditor.slnx
-dotnet test  -c Release dotnet/BlockCodeEditor.slnx
-```
-
-A Release build copies `BlockCodeEditor.Commands.dll`, its XML documentation and its symbols (`.pdb`, for line numbers in a host's stack traces) to `dotnet/artifacts/`. Build it before building a host that references it (as the npm tarball is packed before the platform installs it).
+It has no package dependencies beyond .NET itself. It is published to nuget.org as [`BlockCodeEditor.Commands`](https://www.nuget.org/packages/BlockCodeEditor.Commands), with its XML documentation and its symbols (a `.snupkg`, for line numbers in a host's stack traces).
 
 ## Referencing it
 
 ```xml
 <ItemGroup>
-  <Reference Include="BlockCodeEditor.Commands">
-    <HintPath>..\..\..\block-code-editor\dotnet\artifacts\BlockCodeEditor.Commands.dll</HintPath>
-  </Reference>
+  <PackageReference Include="BlockCodeEditor.Commands" Version="0.2.0" />
 </ItemGroup>
 ```
 
-The path is relative to the host's project file. Keep the reference in one thin adapter project, so the host's own code doesn't depend on the editor's types.
+With Central Package Management, the version goes in `Directory.Packages.props` (`<PackageVersion Include="BlockCodeEditor.Commands" Version="0.2.0" />`) and the `PackageReference` has none. Keep the reference in one thin adapter project, so the host's own code doesn't depend on the editor's types.
+
+### Trying an unreleased change
+
+To build a host against a local clone of this repository instead of the package, the host can swap the package for a project reference behind an opt-in property. The property is off by default, so normal builds use the package:
+
+```xml
+<ItemGroup Condition="'$(UseLocalBlockCodeEditor)' != 'true'">
+  <PackageReference Include="BlockCodeEditor.Commands" />
+</ItemGroup>
+<ItemGroup Condition="'$(UseLocalBlockCodeEditor)' == 'true'">
+  <ProjectReference Include="..\..\..\block-code-editor\dotnet\BlockCodeEditor.Commands\BlockCodeEditor.Commands.csproj" />
+</ItemGroup>
+```
+
+The path is relative to the host's project file. Build with `dotnet build -p:UseLocalBlockCodeEditor=true`.
+
+## Building
+
+```
+dotnet build dotnet/BlockCodeEditor.slnx
+dotnet test  dotnet/BlockCodeEditor.slnx
+dotnet pack  -c Release -p:Version=0.2.0 dotnet/BlockCodeEditor.Commands/BlockCodeEditor.Commands.csproj
+```
+
+Local builds are version `0.0.0-dev`.
+
+## Releasing
+
+The library is released together with the npm package and has the same version. That version lives in `package.json` only. Creating a GitHub release tagged `v<version>` runs `.github/workflows/publish.yml`:
+1. It checks the tag against `package.json`.
+2. It runs both packages' tests, then packs this library with that version.
+3. It publishes the npm package and pushes this one to nuget.org. Both use Trusted Publishing, not stored tokens: npmjs.com and nuget.org each trust this repository and the workflow file `publish.yml`. The repository secret `NUGET_USER` holds the nuget.org profile name.
 
 ## The API (namespace `BlockCodeEditor.Commands`)
 
