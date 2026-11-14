@@ -47,7 +47,7 @@ Local builds are version `0.0.0-dev`.
 The library is released together with the npm package and has the same version. That version lives in `package.json` only. Creating a GitHub release tagged `v<version>` runs `.github/workflows/publish.yml`:
 1. It checks the tag against `package.json`.
 2. It runs both packages' tests, then packs this library with that version.
-3. It publishes the npm package and pushes this one to nuget.org (secret `NUGET_API_KEY`).
+3. It publishes the npm package and pushes this one to nuget.org. Both use Trusted Publishing, not stored tokens: npmjs.com and nuget.org each trust this repository and the workflow file `publish.yml`. The repository secret `NUGET_USER` holds the nuget.org profile name.
 
 ## The API (namespace `BlockCodeEditor.Commands`)
 
