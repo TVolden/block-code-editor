@@ -1,6 +1,13 @@
 {
   "name": "@tvolden/block-code-editor",
-  "version": "0.9.0",
+  "version": "0.2.0",
+  "description": "A visual block programming editor for React, with command-sourced canvases for collaboration",
+  "license": "MIT",
+  "author": "Thomas Volden",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TVolden/block-code-editor.git"
+  },
   "type": "module",
   "main": "./dist/block-editor.cjs",
   "module": "./dist/block-editor.js",

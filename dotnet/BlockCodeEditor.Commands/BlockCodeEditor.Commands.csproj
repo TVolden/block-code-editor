@@ -2,8 +2,8 @@
 
   <!--
     The block editor's command contract (docs/commands.md) and program tree in .NET, for hosts that apply and check
-    commands themselves (e.g. a collaboration server). No package dependencies: hosts reference the built DLL, which a
-    Release build copies to dotnet/artifacts/ (see docs/dotnet.md).
+    commands themselves (e.g. a collaboration server). No package dependencies. Published to nuget.org as
+    BlockCodeEditor.Commands, together with the npm package and with its version (see docs/dotnet.md).
   -->
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -14,12 +14,27 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <!-- Self-explanatory members (the rejection codes, Place's factories) are described in docs/commands.md. -->
     <NoWarn>$(NoWarn);CS1591</NoWarn>
-    <Version>1.0.0</Version>
+    <!-- The version lives in package.json: the release workflow passes it (-p:Version=...). Local builds are dev builds. -->
+    <Version>0.0.0-dev</Version>
   </PropertyGroup>
 
-  <!-- Hosts reference the Release build from a fixed place: the DLL, its XML docs, and its symbols (line numbers in traces). -->
-  <Target Name="CopyToArtifacts" AfterTargets="Build" Condition="'$(Configuration)' == 'Release'">
-    <Copy SourceFiles="$(TargetPath);$(DocumentationFile);$(TargetDir)$(TargetName).pdb" DestinationFolder="$(MSBuildThisFileDirectory)..\artifacts" />
-  </Target>
+  <PropertyGroup>
+    <PackageId>BlockCodeEditor.Commands</PackageId>
+    <Authors>Thomas Volden</Authors>
+    <Description>The block code editor's command contract and program tree in .NET, for hosts that check and apply the editor's commands themselves, such as a collaboration server.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/TVolden/block-code-editor</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/TVolden/block-code-editor.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>block-editor;visual-programming;commands;collaboration</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!-- Symbols (line numbers in a host's stack traces) as a .snupkg, pushed alongside the package. -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Visible="false" />
+  </ItemGroup>
 
 </Project>
