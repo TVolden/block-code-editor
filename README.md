@@ -36,6 +36,10 @@ dotnet test  dotnet/BlockCodeEditor.slnx
 
 The version lives in `package.json` only. To release, bump it and create a GitHub release tagged `v<version>`. The release workflow (`.github/workflows/publish.yml`) tests both packages, then publishes the npm package and the NuGet package with that version.
 
+## Security
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
 ## License
 
 MIT
