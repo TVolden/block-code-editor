@@ -73,7 +73,8 @@
     "blockType": "command",
     "params": [
       { "name": "deck", "type": "Deck" },
-      { "name": "hand", "type": "string" }
+      { "name": "hand", "type": "string" },
+      { "name": "count", "type": "number", "optional": true }
     ],
     "category": "Actions",
     "color": "#1C3A7A"
@@ -84,7 +85,7 @@
     "blockType": "command",
     "params": [
       { "name": "card", "type": "Card" },
-      { "name": "target", "type": "Player" }
+      { "name": "target", "type": "Player", "optional": true }
     ],
     "category": "Actions",
     "color": "#1C3A7A"

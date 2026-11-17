@@ -16,6 +16,8 @@ interface Props {
   onSocketInput?: (blockId: string, slotIndex: number, text: string) => void;
   onSocketCommit?: (blockId: string, slotIndex: number, value: string) => void;
   onSocketCancelEdit?: () => void;
+  /** The `×` of an added optional parameter: leave it out again. */
+  onParamRemove?: (blockId: string, slotIndex: number) => void;
   onOutputDrag: (e: React.PointerEvent, defId: string) => void;
   /** Drawn over the blocks (e.g. other users' cursors). */
   overlay?: React.ReactNode;
@@ -23,7 +25,7 @@ interface Props {
 
 const Canvas = forwardRef<SVGSVGElement, Props>(
   ({ blocks, draggingIds, provisionalIds, onBlockPointerDown, onBlockClick, onSocketClick,
-     editingSocket, onSocketInput, onSocketCommit, onSocketCancelEdit, onOutputDrag, overlay }, ref) => {
+     editingSocket, onSocketInput, onSocketCommit, onSocketCancelEdit, onParamRemove, onOutputDrag, overlay }, ref) => {
     const theme = useTheme();
     // Only roots: each draws the blocks chained under it, embedded in its sockets and held in its mouths.
     const rootBlocks = [...blocks.values()].filter(b => !b.embeddedInBlockId && !b.parentBlockId);
@@ -57,6 +59,7 @@ const Canvas = forwardRef<SVGSVGElement, Props>(
             onSocketInput={onSocketInput}
             onSocketCommit={onSocketCommit}
             onSocketCancelEdit={onSocketCancelEdit}
+            onParamRemove={onParamRemove}
             onOutputDrag={onOutputDrag}
           />
         ))}

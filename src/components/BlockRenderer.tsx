@@ -3,12 +3,13 @@ import type { PlacedBlock } from '../types';
 import { tryGetDefinition } from '../blockRegistry';
 import { blockPath, queryBlockPath, socketPath } from '../utils/blockShapes';
 import {
-  getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillPositions,
-  socketTitle, HAT_H, OUTPUT_PILL_H, QUERY_H, MISSING_H,
+  getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillPositions, getSocketSize,
+  paramTitle, HAT_H, OUTPUT_PILL_H, QUERY_H, MISSING_H,
 } from '../utils/blockLayout';
 import { useTheme } from '../ThemeContext';
 import { MouthDecorations } from './MouthDecorations';
 import { SocketHint } from './SocketHint';
+import { OptionalChip, RemoveParamButton } from './OptionalChip';
 
 interface Props {
   block: PlacedBlock;
@@ -28,6 +29,8 @@ interface Props {
   provisionalIds?: Set<string>;
   /** The text of the socket being typed into, on every keystroke. */
   onSocketInput?: (blockId: string, slotIndex: number, text: string) => void;
+  /** Called when the user removes an added optional parameter (its `×`): its text is cleared, or its query detached. */
+  onParamRemove?: (blockId: string, slotIndex: number) => void;
   embedded?: boolean;
 }
 
@@ -64,7 +67,7 @@ export function BlockRenderer(props: Props) {
   const {
     block, allBlocks, onPointerDown, onBlockClick, onSocketClick,
     editingSocket, onSocketCommit, onSocketCancelEdit, onOutputDrag,
-    isGhost, draggingIds, provisionalIds, onSocketInput, embedded,
+    isGhost, draggingIds, provisionalIds, onSocketInput, onParamRemove, embedded,
   } = props;
   const theme = useTheme();
   const def   = tryGetDefinition(block.definitionId);
@@ -91,6 +94,7 @@ export function BlockRenderer(props: Props) {
           draggingIds={draggingIds}
           provisionalIds={provisionalIds}
           onSocketInput={onSocketInput}
+          onParamRemove={onParamRemove}
           embedded
         />
       </g>
@@ -264,8 +268,14 @@ export function BlockRenderer(props: Props) {
         const embId    = slot?.queryBlockId;
         const embBlock = embId ? allBlocks.get(embId) : null;
 
-        const paramName = def.params[sock.index].name;
-        const title     = socketTitle(paramName, sock.type);
+        const param     = def.params[sock.index];
+        const paramName = param.name;
+        const title     = paramTitle(param);
+        // An added optional parameter can be left out again (not on a ghost, which is only a picture).
+        const removeButton = param.optional && onParamRemove && !isGhost
+          ? <RemoveParamButton w={sock.w} title={`Leave out ${paramName}`}
+              onRemove={() => onParamRemove(block.instanceId, sock.index)} />
+          : null;
 
         // An embedded query: hovering it shows the parameter it fills.
         if (embBlock) {
@@ -273,6 +283,7 @@ export function BlockRenderer(props: Props) {
             <g key={sock.index}>
               <title>{title}</title>
               {renderChild(embId, sock.x, sock.y, 'query')}
+              {removeButton && <g transform={`translate(${sock.x},${sock.y})`}>{removeButton}</g>}
             </g>
           );
         }
@@ -281,22 +292,43 @@ export function BlockRenderer(props: Props) {
         const isEditing = editingSocket?.blockId === block.instanceId
                        && editingSocket?.slotIndex === sock.index;
 
+        // An optional parameter that isn't added: a chip. Like an empty socket, clicking it starts typing (in a socket of
+        // the full width) and a fitting query can be dropped on it.
+        if (sock.collapsed && !isEditing) {
+          return (
+            <g
+              key={sock.index}
+              transform={`translate(${sock.x},${sock.y})`}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onSocketClick?.(block.instanceId, sock.index); }}
+              style={{ cursor: 'pointer' }}
+            >
+              <title>{`${title}: click to type a value, or drop a ${sock.type} query here`}</title>
+              <OptionalChip name={paramName} w={sock.w} h={sock.h} />
+            </g>
+          );
+        }
+
+        // Typing into a chip: the input gets a socket's full size, over what follows until the text is committed.
+        const editW = sock.collapsed ? Math.max(sock.w, getSocketSize(sock.type).w) : sock.w;
+        const editH = sock.collapsed ? getSocketSize(sock.type).h : sock.h;
+
         return (
           <g
             key={sock.index}
-            transform={`translate(${sock.x},${sock.y})`}
+            transform={`translate(${sock.x},${sock.y + (sock.h - editH) / 2})`}
             onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => { e.stopPropagation(); onSocketClick?.(block.instanceId, sock.index); }}
             style={{ cursor: 'text' }}
           >
             <title>{title}</title>
-            <path d={socketPath(sock.type, sock.w, sock.h)}
+            <path d={socketPath(sock.type, editW, editH)}
               fill={isEditing ? theme.blockBorder : theme.socketBody}
               stroke={theme.blockBorder}
               strokeWidth={isEditing ? 1.5 : 1} />
 
             {isEditing ? (
-              <foreignObject x={0} y={0} width={sock.w} height={sock.h}>
+              <foreignObject x={0} y={0} width={editW} height={editH}>
                 <input
                   autoFocus
                   defaultValue={tv ?? ''}
@@ -325,6 +357,7 @@ export function BlockRenderer(props: Props) {
             ) : (
               <SocketHint name={paramName} type={sock.type} w={sock.w} h={sock.h} />
             )}
+            {!isEditing && removeButton}
           </g>
         );
       })}

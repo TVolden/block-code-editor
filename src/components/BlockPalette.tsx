@@ -6,11 +6,12 @@ import type { PackagesTabProps } from './PackagesTab';
 import { blockPath, socketPath } from '../utils/blockShapes';
 import {
   getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillPositions,
-  socketTitle, HAT_H, OUTPUT_PILL_H,
+  paramTitle, HAT_H, OUTPUT_PILL_H,
 } from '../utils/blockLayout';
 import { useTheme } from '../ThemeContext';
 import { MouthDecorations } from './MouthDecorations';
 import { SocketHint } from './SocketHint';
+import { OptionalChip } from './OptionalChip';
 
 // ── Props ─────────────────────────────────────────────────────────────────────
 
@@ -80,13 +81,19 @@ function PaletteBlock({ def, onPointerDown, isPlaced }: {
             </text>
           )}
           {sockets.map((sock) => {
-            const paramName = def.params[sock.index].name;
+            const param = def.params[sock.index];
             return (
               <g key={sock.index} transform={`translate(${sock.x},${sock.y})`}>
-                <title>{socketTitle(paramName, sock.type)}</title>
-                <path d={socketPath(sock.type, sock.w, sock.h)}
-                  fill={theme.socketBody} stroke={theme.blockBorder} strokeWidth={1} />
-                <SocketHint name={paramName} type={sock.type} w={sock.w} h={sock.h} />
+                <title>{paramTitle(param)}</title>
+                {sock.collapsed ? (
+                  <OptionalChip name={param.name} w={sock.w} h={sock.h} />
+                ) : (
+                  <>
+                    <path d={socketPath(sock.type, sock.w, sock.h)}
+                      fill={theme.socketBody} stroke={theme.blockBorder} strokeWidth={1} />
+                    <SocketHint name={param.name} type={sock.type} w={sock.w} h={sock.h} />
+                  </>
+                )}
               </g>
             );
           })}
