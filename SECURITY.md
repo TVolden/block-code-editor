@@ -6,8 +6,8 @@ This project is below 1.0. Only the latest minor version gets security fixes, as
 
 | Package | Supported |
 |---|---|
-| [`@tvolden/block-code-editor`](https://www.npmjs.com/package/@tvolden/block-code-editor) (npm) | 0.2.x |
-| [`BlockCodeEditor.Commands`](https://www.nuget.org/packages/BlockCodeEditor.Commands) (NuGet) | 0.2.x |
+| [`@tvolden/block-code-editor`](https://www.npmjs.com/package/@tvolden/block-code-editor) (npm) | 0.3.x |
+| [`BlockCodeEditor.Commands`](https://www.nuget.org/packages/BlockCodeEditor.Commands) (NuGet) | 0.3.x |
 
 Older versions don't get fixes. Upgrade to the latest release instead.
 

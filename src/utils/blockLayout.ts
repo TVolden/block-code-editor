@@ -53,7 +53,8 @@ const BUILTIN_SOCKET_SIZE: Record<string, { w: number; h: number }> = {
 };
 const CUSTOM_SOCKET_SIZE = { w: 75, h: QUERY_H };
 
-function getSocketSize(type: ParamType): { w: number; h: number } {
+/** The size of an empty socket of the type. */
+export function getSocketSize(type: ParamType): { w: number; h: number } {
   return BUILTIN_SOCKET_SIZE[type] ?? CUSTOM_SOCKET_SIZE;
 }
 
@@ -77,6 +78,28 @@ export interface SocketInfo {
   h: number;
   type: ParamType;
   index: number;
+  /**
+   * An optional parameter that isn't added (its slot holds no text and no query): drawn as a small `[+] name` chip
+   * instead of a socket. It is still a socket: a fitting query dropped on it, or text typed into it, adds it.
+   */
+  collapsed: boolean;
+}
+
+/** Height of the chip an optional parameter that isn't added is drawn as. */
+export const CHIP_H = 18;
+
+/** Whether a parameter is an optional one that isn't added: nothing is in its slot (empty text counts as nothing). */
+export function isCollapsed(param: BlockParam, slot: ParamSlot | undefined): boolean {
+  return !!param.optional && !slot?.queryBlockId && !slot?.textValue;
+}
+
+/** The text on an optional parameter's chip. */
+export function chipLabel(name: string): string {
+  return `+ ${name}`;
+}
+
+function getChipWidth(name: string): number {
+  return chipLabel(name).length * HINT_CHAR_W + 12;
 }
 
 export interface MouthInfo {
@@ -91,12 +114,13 @@ export interface MouthInfo {
   dividerY: number | null;
 }
 
-/** Width occupied by a single slot — uses embedded block width when present. */
+/** Width occupied by a single slot — uses embedded block width when present, a chip's when not added. */
 function resolveSlotWidth(
-  paramType: ParamType,
+  param: BlockParam,
   slot: ParamSlot | undefined,
   allBlocks: Map<string, PlacedBlock> | undefined,
 ): number {
+  if (isCollapsed(param, slot)) return getChipWidth(param.name);
   if (slot?.queryBlockId && allBlocks) {
     const emb = allBlocks.get(slot.queryBlockId);
     if (emb) {
@@ -106,7 +130,7 @@ function resolveSlotWidth(
       if (embDef) return getBlockWidth(embDef, emb.paramSlots, allBlocks);
     }
   }
-  return getSocketSize(paramType).w;
+  return getSocketSize(param.type).w;
 }
 
 /** Approximate width of one character of the 9px hint text inside sockets. */
@@ -127,6 +151,12 @@ export function fitLabel(text: string, socketType: ParamType, width: number): st
 /** A socket's (or mouth's) tooltip: its parameter's name and type. */
 export function socketTitle(name: string, type: ParamType): string {
   return `${name}: ${type}`;
+}
+
+/** A parameter's tooltip: its name and type, and whether it is optional. */
+export function paramTitle(param: BlockParam): string {
+  const title = socketTitle(param.name, param.type);
+  return param.optional ? `${title} (optional)` : title;
 }
 
 /** Minimum pill width based on label text only (type is implicit in the query block itself). */
@@ -156,7 +186,7 @@ export function getBlockWidth(
   let w = LPAD + RPAD + labelText(def).length * CHAR_W;
   for (let i = 0; i < def.params.length; i++) {
     if (isCommandParam(def, def.params[i])) continue;
-    w += SOCKET_GAP + resolveSlotWidth(def.params[i].type, paramSlots?.[i], allBlocks);
+    w += SOCKET_GAP + resolveSlotWidth(def.params[i], paramSlots?.[i], allBlocks);
   }
   // Ensure start blocks are wide enough for their context-variable pills, side by side.
   const pills = getPillPositions(def);
@@ -259,10 +289,11 @@ export function getSocketPositions(
   for (let i = 0; i < def.params.length; i++) {
     const param = def.params[i];
     if (isCommandParam(def, param)) continue;
-    const sw = resolveSlotWidth(param.type, paramSlots?.[i], allBlocks);
-    const sh = getSocketSize(param.type).h;
+    const collapsed = isCollapsed(param, paramSlots?.[i]);
+    const sw = resolveSlotWidth(param, paramSlots?.[i], allBlocks);
+    const sh = collapsed ? CHIP_H : getSocketSize(param.type).h;
     cx += SOCKET_GAP;
-    sockets.push({ x: cx, y: (rowH - sh) / 2, w: sw, h: sh, type: param.type, index: i });
+    sockets.push({ x: cx, y: (rowH - sh) / 2, w: sw, h: sh, type: param.type, index: i, collapsed });
     cx += sw;
   }
   return sockets;

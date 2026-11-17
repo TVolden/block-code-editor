@@ -8,6 +8,12 @@ export const COMMAND_PARAM_TYPE = 'command';
 export interface BlockParam {
   name: string;
   type: ParamType;
+  /**
+   * Whether the parameter may be left out (the host then uses its default). Not added, it is drawn as a small
+   * `[+] name` chip rather than an empty socket: dropping a query on it or typing into it adds it, and removing its value
+   * leaves it out again. Without it the parameter is required.
+   */
+  optional?: boolean;
 }
 
 /**

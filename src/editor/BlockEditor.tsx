@@ -803,6 +803,25 @@ export default function BlockEditor({
   }, []);
 
   /**
+   * An added optional parameter left out again (its `×`): its text is cleared, or its query detached and put down right
+   * of the block, as if dragged out, so nothing is lost. One user action either way.
+   */
+  const handleParamRemove = useCallback((blockId: string, slotIndex: number) => {
+    const state = stateRef.current;
+    const block = state.blocks.get(blockId);
+    const slot  = block?.paramSlots[slotIndex];
+    if (!block || !slot) return;
+    if (!slot.queryBlockId) {
+      perform(setSocketText(blockId, slotIndex, slot.textValue, null));
+      return;
+    }
+    const def = tryGetDefinition(block.definitionId);
+    const pos = layout.get(blockId) ?? block;
+    const right = pos.x + (def ? getBlockWidth(def, block.paramSlots, state.blocks) : 0) + 24;
+    perform(moveChain(state, slot.queryBlockId, { x: right, y: pos.y }, null));
+  }, [layout, perform]);
+
+  /**
    * The Packages tab changed the dependencies: one user action that also removes the blocks of removed packages
    * (a version update keeps the blocks; its blocks are loaded from the new version).
    */
@@ -1090,6 +1109,7 @@ export default function BlockEditor({
             onSocketInput={handleSocketInput}
             onSocketCommit={handleSocketCommit}
             onSocketCancelEdit={handleSocketCancelEdit}
+            onParamRemove={handleParamRemove}
             onOutputDrag={handlePalettePointerDown}
             overlay={peers.length > 0 ? <PeersOverlay peers={peers} blocks={blocks} layout={layout} /> : null}
           />
