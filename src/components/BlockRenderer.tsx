@@ -3,8 +3,8 @@ import type { PlacedBlock } from '../types';
 import { tryGetDefinition } from '../blockRegistry';
 import { blockPath, queryBlockPath, socketPath } from '../utils/blockShapes';
 import {
-  getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillWidth,
-  socketTitle, HAT_H, OUTPUT_ROW_H, QUERY_H, MISSING_H,
+  getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillPositions,
+  socketTitle, HAT_H, OUTPUT_PILL_H, QUERY_H, MISSING_H,
 } from '../utils/blockLayout';
 import { useTheme } from '../ThemeContext';
 import { MouthDecorations } from './MouthDecorations';
@@ -226,18 +226,16 @@ export function BlockRenderer(props: Props) {
           {/* Divider between header and context panel */}
           <line x1={8} y1={HAT_H} x2={w - 8} y2={HAT_H}
             stroke="rgba(255,255,255,0.15)" strokeWidth={1} />
-          {def.provides.map((prov, i) => {
+          {getPillPositions(def).map((prov) => {
             const provDef    = tryGetDefinition(prov.id);
             const pillColor  = provDef?.color ?? def.color;
-            const pillW      = getPillWidth(prov.name);
-            const pillH      = 20;
-            const pillX      = 8;
-            const pillY      = HAT_H + 6 + i * OUTPUT_ROW_H;
+            const pillW      = prov.w;
+            const pillH      = OUTPUT_PILL_H;
             const interactive = !isGhost && !embedded;
             return (
               <g
                 key={prov.id}
-                transform={`translate(${pillX}, ${pillY})`}
+                transform={`translate(${prov.x}, ${prov.y})`}
                 onPointerDown={interactive
                   ? (e) => { e.stopPropagation(); onOutputDrag?.(e, prov.id); }
                   : undefined}

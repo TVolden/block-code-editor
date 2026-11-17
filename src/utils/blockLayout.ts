@@ -26,6 +26,9 @@ export const OUTPUT_PILL_H = 20;
  * The bottom-padding of the last row is baked into getBlockHeight, not here.
  */
 export const OUTPUT_ROW_H  = 26;
+/** Left edge of the first pill, and the space between pills side by side. */
+const PILL_X0 = 8;
+const PILL_GAP = 6;
 
 const LPAD = 12;
 const RPAD = 12;
@@ -131,6 +134,19 @@ export function getPillWidth(name: string): number {
   return Math.max(72, name.length * 6 + 22);
 }
 
+/**
+ * Where a start block's context-variable pills go: side by side, one column each, in a single row below the header
+ * divider. Positions are relative to the block.
+ */
+export function getPillPositions(def: BlockDefinition): { id: string; name: string; x: number; y: number; w: number }[] {
+  let x = PILL_X0;
+  return (def.blockType === 'start' ? def.provides ?? [] : []).map(p => {
+    const pill = { id: p.id, name: p.name, x, y: HAT_H + 6, w: getPillWidth(p.name) };
+    x += pill.w + PILL_GAP;
+    return pill;
+  });
+}
+
 /** Width of a block, accounting for embedded query blocks in param slots. Mouths don't widen it. */
 export function getBlockWidth(
   def: BlockDefinition,
@@ -142,11 +158,11 @@ export function getBlockWidth(
     if (isCommandParam(def, def.params[i])) continue;
     w += SOCKET_GAP + resolveSlotWidth(def.params[i].type, paramSlots?.[i], allBlocks);
   }
-  // Ensure start blocks are wide enough for their widest context-variable pill.
-  if (def.blockType === 'start' && def.provides) {
-    for (const p of def.provides) {
-      w = Math.max(w, LPAD + getPillWidth(p.name) + RPAD);
-    }
+  // Ensure start blocks are wide enough for their context-variable pills, side by side.
+  const pills = getPillPositions(def);
+  if (pills.length > 0) {
+    const last = pills[pills.length - 1];
+    w = Math.max(w, last.x + last.w + RPAD);
   }
   // Ensure C-blocks are wide enough for the names on their divider bars and empty mouths.
   def.params.forEach((p) => {
@@ -173,10 +189,8 @@ export function getBlockHeight(
   allBlocks?: Map<string, PlacedBlock>,
 ): number {
   if (def.blockType === 'start') {
-    const n = def.provides?.length ?? 0;
-    // Panel layout: 6px top-pad + n × (pill 20px + 6px gap) − last gap + 8px bottom-pad
-    // Simplifies to: n > 0 → 8 + n × OUTPUT_ROW_H extra pixels below HAT_H
-    return HAT_H + (n > 0 ? 8 + n * OUTPUT_ROW_H : 0);
+    // Panel layout: one row of pills side by side — 6px top-pad + pill 20px + 6px gap + 8px bottom-pad
+    return HAT_H + (def.provides && def.provides.length > 0 ? 8 + OUTPUT_ROW_H : 0);
   }
   if (def.blockType === 'command') {
     const mouths = getMouthPositions(def, paramSlots, allBlocks);

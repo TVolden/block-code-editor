@@ -4,7 +4,39 @@
     "name": "When Played",
     "blockType": "start",
     "params": [],
+    "provides": [
+      { "name": "card", "id": "$when-played.card" },
+      { "name": "player", "id": "$when-played.player" },
+      { "name": "target", "id": "$when-played.target" }
+    ],
     "category": "Events",
+    "color": "#7A1C2A"
+  },
+  {
+    "id": "$when-played.card",
+    "name": "card",
+    "blockType": "query",
+    "returnType": "Card",
+    "params": [],
+    "category": "$when-played",
+    "color": "#7A1C2A"
+  },
+  {
+    "id": "$when-played.player",
+    "name": "player",
+    "blockType": "query",
+    "returnType": "Player",
+    "params": [],
+    "category": "$when-played",
+    "color": "#7A1C2A"
+  },
+  {
+    "id": "$when-played.target",
+    "name": "target",
+    "blockType": "query",
+    "returnType": "Player",
+    "params": [],
+    "category": "$when-played",
     "color": "#7A1C2A"
   },
   {
@@ -20,7 +52,19 @@
     "name": "When Drawn",
     "blockType": "start",
     "params": [],
+    "provides": [
+      { "name": "card", "id": "$when-drawn.card" }
+    ],
     "category": "Events",
+    "color": "#7A1C2A"
+  },
+  {
+    "id": "$when-drawn.card",
+    "name": "card",
+    "blockType": "query",
+    "returnType": "Card",
+    "params": [],
+    "category": "$when-drawn",
     "color": "#7A1C2A"
   },
   {

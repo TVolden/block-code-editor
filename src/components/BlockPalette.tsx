@@ -5,8 +5,8 @@ import PackagesTab from './PackagesTab';
 import type { PackagesTabProps } from './PackagesTab';
 import { blockPath, socketPath } from '../utils/blockShapes';
 import {
-  getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillWidth,
-  socketTitle, HAT_H, OUTPUT_ROW_H,
+  getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillPositions,
+  socketTitle, HAT_H, OUTPUT_PILL_H,
 } from '../utils/blockLayout';
 import { useTheme } from '../ThemeContext';
 import { MouthDecorations } from './MouthDecorations';
@@ -95,13 +95,13 @@ function PaletteBlock({ def, onPointerDown, isPlaced }: {
             <g>
               <line x1={8} y1={HAT_H} x2={w - 8} y2={HAT_H}
                 stroke="rgba(255,255,255,0.15)" strokeWidth={1} />
-              {def.provides.map((prov, i) => {
+              {getPillPositions(def).map((prov) => {
                 const provDef   = tryGetDefinition(prov.id);
                 const pillColor = provDef?.color ?? def.color;
-                const pillW     = getPillWidth(prov.name);
-                const pillH     = 20;
+                const pillW     = prov.w;
+                const pillH     = OUTPUT_PILL_H;
                 return (
-                  <g key={prov.id} transform={`translate(8, ${HAT_H + 6 + i * OUTPUT_ROW_H})`}>
+                  <g key={prov.id} transform={`translate(${prov.x}, ${prov.y})`}>
                     <rect x={0} y={0} width={pillW} height={pillH} rx={10}
                       fill={pillColor} opacity={0.82}
                       stroke="rgba(255,255,255,0.25)" strokeWidth={1} />
@@ -188,7 +188,10 @@ export default function BlockPalette({
 
   // Categories prefixed with "$" are scope-bound variable definitions only
   // reachable by dragging from an event block's output pill, not from the palette.
+  // The registry is module-level, so the hooks linter can't see that registryVersion is what signals its changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- registryVersion signals a change of the registry
   const allDefs    = useMemo(() => getAllDefinitions().filter(d => !d.category.startsWith('$')), [registryVersion]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- registryVersion signals a change of the registry
   const categories = useMemo(() => getCategories().filter(c => !c.startsWith('$')),             [registryVersion]);
 
   const query = searchQuery.trim().toLowerCase();
@@ -197,7 +200,8 @@ export default function BlockPalette({
   function toggleCategory(cat: string) {
     setCollapsedCategories(prev => {
       const next = new Set(prev);
-      next.has(cat) ? next.delete(cat) : next.add(cat);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
       return next;
     });
   }

@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+# The jobs only read the repository; they don't depend on the repository's default token permissions.
+permissions:
+  contents: read
+
 jobs:
   editor:
     runs-on: ubuntu-latest
@@ -15,6 +19,7 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
+      - run: npm run lint
       - run: npm test
       - run: npm run build
 
