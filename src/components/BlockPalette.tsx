@@ -188,7 +188,10 @@ export default function BlockPalette({
 
   // Categories prefixed with "$" are scope-bound variable definitions only
   // reachable by dragging from an event block's output pill, not from the palette.
+  // The registry is module-level, so the hooks linter can't see that registryVersion is what signals its changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- registryVersion signals a change of the registry
   const allDefs    = useMemo(() => getAllDefinitions().filter(d => !d.category.startsWith('$')), [registryVersion]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- registryVersion signals a change of the registry
   const categories = useMemo(() => getCategories().filter(c => !c.startsWith('$')),             [registryVersion]);
 
   const query = searchQuery.trim().toLowerCase();
@@ -197,7 +200,8 @@ export default function BlockPalette({
   function toggleCategory(cat: string) {
     setCollapsedCategories(prev => {
       const next = new Set(prev);
-      next.has(cat) ? next.delete(cat) : next.add(cat);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
       return next;
     });
   }

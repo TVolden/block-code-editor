@@ -281,21 +281,26 @@ function formatOutputLine(block: PlacedBlock, blocks: Map<string, PlacedBlock>):
 
 // ── DragGhost ─────────────────────────────────────────────────────────────────
 
+/** Where the drag ghost is drawn, and what it shows. */
+interface GhostPos {
+  x: number;
+  y: number;
+  defId: string;        // block definition being dragged
+  instanceId?: string;  // canvas block being dragged (canvas drags only)
+}
+
 interface DragGhostProps {
-  ghostPos: { x: number; y: number; defId: string } | null;
-  dragRef:  React.RefObject<DragState | null>;
+  ghostPos: GhostPos | null;
   blocks:   Map<string, PlacedBlock>;
 }
 
-function DragGhost({ ghostPos, dragRef, blocks }: DragGhostProps) {
+function DragGhost({ ghostPos, blocks }: DragGhostProps) {
   const theme = useTheme();
   if (!ghostPos) return null;
 
-  const drag = dragRef.current;
-
   // Canvas drag: render the full block so embedded params follow the cursor
-  if (drag?.type === 'canvas' && drag.instanceId) {
-    const block = blocks.get(drag.instanceId);
+  if (ghostPos.instanceId) {
+    const block = blocks.get(ghostPos.instanceId);
     if (block) {
       return (
         <svg style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 9999 }}>
@@ -353,12 +358,12 @@ export default function BlockEditor({
     return THEMES.find(t => t.id === saved) ?? darkTheme;
   });
 
-  // Keep theme in sync when the caller changes the themeId prop.
-  useEffect(() => {
-    if (!themeId) return;
-    const next = THEMES.find(t => t.id === themeId) ?? darkTheme;
-    setTheme(next);
-  }, [themeId]);
+  // Keep theme in sync when the caller changes the themeId prop (adjusted during render, not in an effect).
+  const [prevThemeId, setPrevThemeId] = useState(themeId);
+  if (themeId !== prevThemeId) {
+    setPrevThemeId(themeId);
+    if (themeId) setTheme(THEMES.find(t => t.id === themeId) ?? darkTheme);
+  }
   const [ready, setReady]         = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -539,7 +544,7 @@ export default function BlockEditor({
     return ids;
   }, [blocks]);
 
-  const [ghostPos, setGhostPos]         = useState<{ x: number; y: number; defId: string } | null>(null);
+  const [ghostPos, setGhostPos]         = useState<GhostPos | null>(null);
   const [draggingIds, setDraggingIds]   = useState<Set<string>>(new Set());
   const [isOverPalette, setIsOverPalette] = useState(false);
 
@@ -548,7 +553,8 @@ export default function BlockEditor({
 
   // Where every block is drawn (non-root blocks are placed by the block they hang off). It depends on the definitions
   // in the registry too, which change with registryVersion (e.g. when they load after an initial state).
-  // (The same pattern as the palette's definitions; the hooks linter warns that registryVersion looks unused.)
+  // The registry is module-level, so the hooks linter can't see that registryVersion is what signals its changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- registryVersion signals a change of the registry
   const layout = useMemo(() => computeLayout(blocks), [blocks, registryVersion]);
 
   // Keep getStateRef current so the parent can read canvas state on demand.
@@ -581,6 +587,14 @@ export default function BlockEditor({
   // Loads change the module-level registry, so they run one after another.
   const loadQueue = useRef<Promise<void>>(Promise.resolve());
 
+  // New URLs: the editor is not ready until the load below is done (reset during render, not in the effect).
+  const [prevUrlsKey, setPrevUrlsKey] = useState(resolvedUrlsKey);
+  if (resolvedUrlsKey !== prevUrlsKey) {
+    setPrevUrlsKey(resolvedUrlsKey);
+    setReady(false);
+    setLoadError(null);
+  }
+
   // The core set, then the dependencies; the editor is ready only once all are in.
   // A run whose effect was cleaned up (StrictMode's double run in development, or new URLs) does nothing more: a later
   // run clears and reloads the registry, and must not find a stale run marking the editor ready while it is still
@@ -588,8 +602,6 @@ export default function BlockEditor({
   useEffect(() => {
     let cancelled = false;
     const urls = resolvedUrlsKey.split('|');
-    setReady(false);
-    setLoadError(null);
     loadQueue.current = loadQueue.current.then(async () => {
       if (cancelled) return;
       try {
@@ -640,18 +652,29 @@ export default function BlockEditor({
 
   // ── Inline (additional) blocks ───────────────────────────────────────────────
 
+  // Queued like the other loads (they change the same registry). A run whose effect was cleaned up before its turn is
+  // skipped: the next run replaces the inline blocks anyway.
   useEffect(() => {
     if (!ready) return;
-    unloadPackage('__inline__');
-    if (additionalBlocks && additionalBlocks.length > 0) {
-      loadInlinePackage(
-        { id: '__inline__', name: 'Inline', description: '', url: '', builtIn: true },
-        additionalBlocks,
-      );
-    }
-    setLoadedPackages(getLoadedPackages());
-    setRegistryVersion(v => v + 1);
-    // Blocks whose definition went (e.g. a renamed collection) stay as placeholders until the user deletes them.
+    let cancelled = false;
+    loadQueue.current = loadQueue.current.then(() => {
+      if (cancelled) return;
+      try {
+        unloadPackage('__inline__');
+        if (additionalBlocks && additionalBlocks.length > 0) {
+          loadInlinePackage(
+            { id: '__inline__', name: 'Inline', description: '', url: '', builtIn: true },
+            additionalBlocks,
+          );
+        }
+        setLoadedPackages(getLoadedPackages());
+        setRegistryVersion(v => v + 1);
+        // Blocks whose definition went (e.g. a renamed collection) stay as placeholders until the user deletes them.
+      } catch (err) {
+        setLoadError(String(err));
+      }
+    });
+    return () => { cancelled = true; };
   }, [additionalBlocks, ready]);
 
   // ── Coordinate helpers ───────────────────────────────────────────────────────
@@ -839,7 +862,7 @@ export default function BlockEditor({
     };
     // The lead is faded; the blocks hanging off it are drawn inside it and fade with it.
     setDraggingIds(new Set([instanceId]));
-    setGhostPos({ x: e.clientX - offsetX, y: e.clientY - offsetY, defId: block.definitionId });
+    setGhostPos({ x: e.clientX - offsetX, y: e.clientY - offsetY, defId: block.definitionId, instanceId });
     (e.target as Element).setPointerCapture(e.pointerId);
   }, [blocks, layout, toSVG]);
 
@@ -855,7 +878,9 @@ export default function BlockEditor({
         started = true;
       }
       if (!drag.moved) return;
-      setGhostPos({ x: e.clientX - drag.offsetX, y: e.clientY - drag.offsetY, defId: drag.defId });
+      setGhostPos({
+        x: e.clientX - drag.offsetX, y: e.clientY - drag.offsetY, defId: drag.defId, instanceId: drag.instanceId,
+      });
 
       // Presence: the ghost's top-left in canvas coordinates (sent at once when the drag starts).
       const at = toSVG(e.clientX - drag.offsetX, e.clientY - drag.offsetY);
@@ -1078,7 +1103,7 @@ export default function BlockEditor({
           />
         </div>
       </div>
-      <DragGhost ghostPos={ghostPos} dragRef={dragRef} blocks={blocks} />
+      <DragGhost ghostPos={ghostPos} blocks={blocks} />
     </div>
     </ThemeContext.Provider>
   );
