@@ -5,8 +5,8 @@ import PackagesTab from './PackagesTab';
 import type { PackagesTabProps } from './PackagesTab';
 import { blockPath, socketPath } from '../utils/blockShapes';
 import {
-  getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillWidth,
-  socketTitle, HAT_H, OUTPUT_ROW_H,
+  getBlockWidth, getBlockHeight, getHeaderHeight, getSocketPositions, getMouthPositions, getPillPositions,
+  socketTitle, HAT_H, OUTPUT_PILL_H,
 } from '../utils/blockLayout';
 import { useTheme } from '../ThemeContext';
 import { MouthDecorations } from './MouthDecorations';
@@ -95,13 +95,13 @@ function PaletteBlock({ def, onPointerDown, isPlaced }: {
             <g>
               <line x1={8} y1={HAT_H} x2={w - 8} y2={HAT_H}
                 stroke="rgba(255,255,255,0.15)" strokeWidth={1} />
-              {def.provides.map((prov, i) => {
+              {getPillPositions(def).map((prov) => {
                 const provDef   = tryGetDefinition(prov.id);
                 const pillColor = provDef?.color ?? def.color;
-                const pillW     = getPillWidth(prov.name);
-                const pillH     = 20;
+                const pillW     = prov.w;
+                const pillH     = OUTPUT_PILL_H;
                 return (
-                  <g key={prov.id} transform={`translate(8, ${HAT_H + 6 + i * OUTPUT_ROW_H})`}>
+                  <g key={prov.id} transform={`translate(${prov.x}, ${prov.y})`}>
                     <rect x={0} y={0} width={pillW} height={pillH} rx={10}
                       fill={pillColor} opacity={0.82}
                       stroke="rgba(255,255,255,0.25)" strokeWidth={1} />
